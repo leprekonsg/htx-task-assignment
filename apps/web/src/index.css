@@ -106,6 +106,23 @@
   --color-danger: #a4161a;
   --color-danger-soft: #f7e7e7;
 
+  /*
+   * The app's one authored motion. A subtask added from the task list arrives on a row that starts
+   * on the accent plate and drains back to paper — the ink of the write still settling. It plays
+   * once, on one row, only for readers who haven't asked for reduced motion (the `motion-safe:`
+   * variant at the call site); the row is announced in a live region either way, so nobody depends
+   * on having seen it.
+   */
+  --animate-ink-settle: ink-settle 1.4s ease-out;
+  @keyframes ink-settle {
+    from {
+      background-color: var(--color-accent-soft);
+    }
+    to {
+      background-color: transparent;
+    }
+  }
+
   /* Printed sheets have square corners. Just enough radius to keep controls from looking hostile. */
   --radius-sm: 2px;
   --radius-md: 3px;

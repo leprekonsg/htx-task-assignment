@@ -17,9 +17,12 @@ export const primaryButtonClass =
 export const secondaryButtonClass =
   'rounded-sm border border-rule-strong px-3.5 py-2 text-sm font-medium text-text transition-colors hover:border-text hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-45';
 
-// A third, quieter rank for controls that change what you can *see* rather than what exists: the
-// Expand all / Collapse all pair above the task table, and the per-row Add subtask action. They sit
-// inside dense content, so they carry no border and no fill — muted ink that firms up on hover and
-// focus. Deliberately not the accent plate: folding a row is not one of its four jobs.
+// A third, quieter rank for controls that sit inside dense content rather than at the end of a
+// form: the Expand all / Collapse all pair above the task table, and the per-row Add subtask
+// action. They carry no border and no fill — muted ink that firms up on hover and focus.
+// Deliberately not the accent plate: folding a row is not one of its four jobs.
+//
+// `transition` rather than `transition-colors` because the row action also fades in and out; one
+// transition property has to cover both, or whichever utility Tailwind emits last silently wins.
 export const quietButtonClass =
-  'rounded-sm px-2 py-1 text-xs font-medium text-text-muted transition-colors hover:bg-surface-sunken hover:text-text disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-text-muted';
+  'rounded-sm px-2 py-1 text-xs font-medium text-text-muted transition hover:bg-surface-sunken hover:text-text disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-text-muted';

@@ -32,8 +32,21 @@
 //
 // Everything starts expanded. The list opens the way it always has, and folding is something the
 // reader chooses — never a state they have to undo before they can see their own tasks.
+//
+// ── Adding a subtask in place ──────────────────────────────────────────────────────────────────
+//
+// `composerFor` holds at most one task id, so opening the Add subtask composer anywhere closes the
+// one that was open. That is a deliberate limit rather than an implementation shortcut: two open
+// composers would mean two half-written subtasks and two in-flight POSTs racing the same refetch.
+//
+// A successful add does four things here, in the order a reader experiences them: unfold the parent
+// (a new subtask hidden inside a folded row would be a create with nothing to show for it), mark
+// the new row for its one-shot settle, announce it in a live region for anyone who can't see that
+// settle, and close the composer. `TaskRow` handles the fifth, which needs a real DOM node rather
+// than state: putting focus back on the Add subtask button it came from.
 import { useState } from 'react';
 import { useLocation } from 'react-router';
+import type { Task } from '@htx/shared';
 import { collapsibleTaskIds, flattenTaskTree, flattenVisibleTaskTree } from '@htx/shared';
 import EmptyState from '../components/EmptyState';
 import ErrorBanner from '../components/ErrorBanner';
@@ -52,6 +65,9 @@ export default function TaskListPage() {
     (location.state as { flash?: string } | null)?.flash ?? null,
   );
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<number>>(() => new Set());
+  const [composerFor, setComposerFor] = useState<number | null>(null);
+  const [addedTaskId, setAddedTaskId] = useState<number | null>(null);
+  const [announcement, setAnnouncement] = useState('');
 
   const tasks = tasksQuery.data ?? [];
   const allRows = flattenTaskTree(tasks);
@@ -72,6 +88,18 @@ export default function TaskListPage() {
       if (!next.delete(id)) next.add(id);
       return next;
     });
+
+  const handleSubtaskCreated = (parent: Task, created: Task) => {
+    setCollapsedIds((current) => {
+      if (!current.has(parent.id)) return current;
+      const next = new Set(current);
+      next.delete(parent.id);
+      return next;
+    });
+    setAddedTaskId(created.id);
+    setAnnouncement(`Added "${created.title}" under "${parent.title}"`);
+    setComposerFor(null);
+  };
 
   // A one-line census of the list — count, done, unassigned — read before a single row is read.
   // It counts every task, folded or not: what you can currently see is a reading choice, and a
@@ -97,6 +125,13 @@ export default function TaskListPage() {
       </header>
 
       {flash && <FlashBanner message={flash} onDismiss={() => setFlash(null)} />}
+
+      {/* Everything a sighted reader learns from the new row appearing and settling, said out loud
+          once for everyone else. Rendered empty from the start: a live region added to the page at
+          the same moment as its text is often not announced at all. */}
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
 
       {tasksQuery.isError && (
         <ErrorBanner
@@ -139,8 +174,13 @@ export default function TaskListPage() {
             </div>
           )}
 
-          <div className="overflow-x-auto bg-surface-raised">
-            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+          {/* `relative` is load-bearing, not decoration: the two visually-hidden column names inside
+              the table are `position: absolute`, so without a positioned ancestor their containing
+              block is the viewport and this scroll container cannot clip them. The one in the
+              right-hand Actions header then sits ~730px out and scrolls the whole page sideways on
+              a phone. Positioning the scroller puts them back inside it. */}
+          <div className="relative overflow-x-auto bg-surface-raised">
+            <table className="w-full min-w-[820px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-rule-strong">
                   {/* The fold gutter. It has a name for screen readers and nothing to print. */}
@@ -162,6 +202,10 @@ export default function TaskListPage() {
                   <th scope="col" className={`px-3 py-2.5 ${microLabelClass}`}>
                     Assignee
                   </th>
+                  {/* Row actions. Named for screen readers; the column prints nothing of its own. */}
+                  <th scope="col" className="px-3 py-2.5">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -176,6 +220,11 @@ export default function TaskListPage() {
                       assignmentUnavailable={assignmentUnavailable}
                       collapsed={collapsedIds.has(row.task.id)}
                       onToggleCollapse={() => toggleCollapsed(row.task.id)}
+                      composerOpen={composerFor === row.task.id}
+                      onOpenComposer={() => setComposerFor(row.task.id)}
+                      onCloseComposer={() => setComposerFor(null)}
+                      onSubtaskCreated={(created) => handleSubtaskCreated(row.task, created)}
+                      highlighted={addedTaskId === row.task.id}
                     />
                   ))
                 )}

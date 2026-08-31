@@ -393,3 +393,204 @@ describe('TaskListPage folding', () => {
     expect(screen.queryByRole('button', { name: 'Collapse all' })).toBeNull();
   });
 });
+
+/**
+ * Adding a subtask from the list itself. The mock keeps a real tree and mutates it on POST, so
+ * these tests exercise the whole loop the user sees: open the composer, post with a `parentId`,
+ * invalidate, refetch, and find the new row nested under its parent.
+ */
+describe('TaskListPage add subtask', () => {
+  const base = {
+    status: 'todo' as const,
+    parentId: null,
+    assignee: null,
+    skills: [],
+    skillsSource: 'user' as const,
+    skillsModel: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  const node = (id: number, title: string, subtasks: Task[] = []): Task => ({
+    ...base,
+    id,
+    title,
+    subtasks,
+  });
+
+  /** Returns a copy of `tasks` with `child` appended to the subtasks of `parentId`. */
+  function attach(tasks: Task[], parentId: number, child: Task): Task[] {
+    return tasks.map((task) =>
+      task.id === parentId
+        ? { ...task, subtasks: [...task.subtasks, child] }
+        : { ...task, subtasks: attach(task.subtasks, parentId, child) },
+    );
+  }
+
+  function mockApi(initial: Task[]) {
+    const state = { tasks: initial, nextId: 100, rejectWith: null as ErrorResponse | null };
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (method === 'GET' && url === '/api/tasks') return jsonResponse(200, state.tasks);
+      if (method === 'GET' && url === '/api/developers') return jsonResponse(200, developers);
+      if (method === 'GET' && url === '/api/skills') return jsonResponse(200, [frontend, backend]);
+      if (method === 'POST' && url === '/api/tasks') {
+        if (state.rejectWith) return jsonResponse(409, state.rejectWith);
+        const body = JSON.parse(String(init?.body)) as { title: string; parentId?: number };
+        const created = { ...node(state.nextId++, body.title), parentId: body.parentId ?? null };
+        state.tasks = attach(state.tasks, body.parentId!, created);
+        return jsonResponse(201, created);
+      }
+      throw new Error(`Unhandled request: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+    return state;
+  }
+
+  it('posts the parent id, nests the new row, and says so out loud', async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API', [node(2, 'Write tests')])]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    // The composer names what it is adding to, so a long table can't leave you guessing.
+    expect(screen.getByText(/New subtask of/)).toHaveTextContent('New subtask of 1 — Build API');
+
+    await user.type(screen.getByLabelText('Title'), 'Add fixtures');
+    await user.click(screen.getByRole('button', { name: 'Add subtask' }));
+
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/api/tasks',
+        expect.objectContaining({
+          method: 'POST',
+          // No `skillIds` key at all: that is how the backend is told to infer them.
+          body: JSON.stringify({ title: 'Add fixtures', parentId: 1 }),
+        }),
+      ),
+    );
+
+    // The new task comes back nested and numbered as a subtask, not as a root.
+    expect(await screen.findByText('Add fixtures')).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '1.2' })).toBeInTheDocument();
+    expect(screen.getByText('Added "Add fixtures" under "Build API"')).toBeInTheDocument();
+    // And the composer is gone once it has done its job.
+    expect(screen.queryByText(/New subtask of/)).toBeNull();
+  });
+
+  it('sends the skills that were ticked', async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API')]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    await user.type(screen.getByLabelText('Title'), 'Charts');
+    await user.click(
+      within(screen.getByRole('group', { name: 'Skills for the new subtask' })).getByLabelText(
+        'Frontend',
+      ),
+    );
+    await user.click(screen.getByRole('button', { name: 'Add subtask' }));
+
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/api/tasks',
+        expect.objectContaining({
+          body: JSON.stringify({ title: 'Charts', parentId: 1, skillIds: [1] }),
+        }),
+      ),
+    );
+  });
+
+  it('unfolds the parent so the subtask it just made is not created into a hidden row', async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API', [node(2, 'Write tests')])]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Subtasks of Build API' }));
+    expect(screen.queryByText('Write tests')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    await user.type(screen.getByLabelText('Title'), 'Add fixtures');
+    await user.click(screen.getByRole('button', { name: 'Add subtask' }));
+
+    expect(await screen.findByText('Add fixtures')).toBeInTheDocument();
+    expect(screen.getByText('Write tests')).toBeInTheDocument();
+  });
+
+  it('explains an empty title instead of disabling the button, and keeps focus in the field', async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API')]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    const submit = screen.getByRole('button', { name: 'Add subtask' });
+    expect(submit).toBeEnabled();
+
+    await user.click(submit);
+    expect(screen.getByText('Title is required')).toBeInTheDocument();
+    expect(screen.getByLabelText('Title')).toHaveFocus();
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      '/api/tasks',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('returns focus to the row action when the composer is cancelled', async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API')]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    const action = screen.getByRole('button', { name: 'Add subtask to Build API' });
+    await user.click(action);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByText(/New subtask of/)).toBeNull();
+    expect(action).toHaveFocus();
+  });
+
+  it("shows the server's own message inside the composer when the POST is rejected", async () => {
+    const user = userEvent.setup();
+    const state = mockApi([node(1, 'Build API')]);
+    state.rejectWith = {
+      error: { code: 'PARENT_IS_DONE', message: 'Cannot add a subtask under a task that is Done' },
+    };
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    await user.type(screen.getByLabelText('Title'), 'Add fixtures');
+    await user.click(screen.getByRole('button', { name: 'Add subtask' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Cannot add a subtask under a task that is Done',
+    );
+    // The composer stays open with the typed title intact, so the work isn't lost.
+    expect(screen.getByLabelText('Title')).toHaveValue('Add fixtures');
+  });
+
+  it('holds the submit and says why when the parent is Done', async () => {
+    const user = userEvent.setup();
+    mockApi([{ ...node(1, 'Build API'), status: 'done' }]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+
+    expect(screen.getByRole('button', { name: 'Add subtask' })).toBeDisabled();
+    expect(screen.getByText(/is Done, so it can't take a new subtask/)).toBeInTheDocument();
+  });
+
+  it('offers no action on a task that is already five levels deep', async () => {
+    mockApi([node(1, 'L1', [node(2, 'L2', [node(3, 'L3', [node(4, 'L4', [node(5, 'L5')])])])])]);
+    renderPage();
+    await screen.findByText('L1');
+
+    expect(screen.getByRole('button', { name: 'Add subtask to L4' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add subtask to L5' })).toBeNull();
+  });
+});

@@ -41,7 +41,7 @@ Read these in order; each paragraph is one file.
 3. **`src/index.css`** — Tailwind setup and the design tokens (`@theme` block), with
    `src/components/typeStyles.ts` and `buttonStyles.ts` beside it holding the shared type and button
    class strings. Skim them once so the class names you see everywhere else (`bg-accent`,
-   `text-text-muted`, `microLabelClass`) make sense; see §7.
+   `text-text-muted`, `microLabelClass`) make sense; see §8.
 4. **`src/api/client.ts`** — `apiGet`/`apiPost`/`apiPatch`, the only functions that call `fetch`
    directly, plus `ApiError`, which turns the server's `{ error: { code, message } }` envelope into
    a real JS exception with a `.message` you can show to a user.
@@ -62,8 +62,12 @@ Read these in order; each paragraph is one file.
    normal in React — it's how any nested/tree UI gets built). `CreateTaskPage` owns the
    `useReducer`, validates the whole tree when the user submits (focusing the first task without a
    title), and turns a successful submit into a POST plus a redirect.
-9. **`src/components/{SkeletonRows,EmptyState,ErrorBanner,FlashBanner}.tsx`** — small, single-purpose
-   display components used by the two pages above. Read on demand; each has its own header comment.
+9. **`src/components/AddSubtaskForm.tsx`** — the one-node composer the task list opens under a row
+   to add a subtask to an existing task (§7). It reuses `SkillCheckboxes` from the create form but
+   is deliberately not the recursive form itself.
+10. **`src/components/{SkeletonRows,EmptyState,ErrorBanner,FlashBanner}.tsx`** — small,
+    single-purpose display components used by the two pages above. Read on demand; each has its own
+    header comment.
 
 ## 3. Four concepts, and where they show up
 
@@ -103,7 +107,7 @@ the font stack as CSS variables (`--color-accent`, `--radius-md`, ...); Tailwind
 matching utility classes (`bg-accent`, `rounded-md`). Every component in this app uses only those
 generated utilities — never a raw Tailwind palette class like `bg-blue-500` and never an inline hex
 colour — so the entire app's palette lives in one file, and changing a token there changes every
-component that uses it. §7 covers what this app's particular tokens mean and why there are so few.
+component that uses it. §8 covers what this app's particular tokens mean and why there are so few.
 
 ## 4. How a status change travels
 
@@ -196,7 +200,47 @@ isn't the chevron; it's where the state lives and what it is keyed by.
 the ids of every task that has subtasks. That list is also how the page knows whether to offer the
 controls at all: a flat list has nothing to fold, so it gets no toolbar.
 
-## 7. The design system: two inks on paper
+## 7. How adding a subtask in place travels
+
+`POST /api/tasks` has always taken an optional `parentId` that attaches what you send under an
+existing task. The Create Task page never sends it — it builds a whole tree and posts it as one
+root — so until now the only way to get a subtask was to have thought of it while creating the
+parent. The task list can now send it, which is a completeness improvement rather than a missing
+requirement: Part 4.3 asks for nested creation *on the Create Task page*, and that page is unchanged.
+
+1. Each row renders an **Add subtask** action, present in the DOM and the tab order at all times and
+   revealed on hover or focus, so a table of forty rows isn't also a table of forty buttons. It is
+   absent below `MAX_TASK_DEPTH`: a sixth level is something the server would refuse, and a button
+   that only ever produces an error is worse than no button.
+2. Clicking it sets `composerFor` on the page to that task's id — **one at a time**, so opening a
+   composer anywhere closes the one that was open. Two open composers would mean two half-written
+   subtasks and two POSTs racing the same refetch.
+3. `AddSubtaskForm` renders in a full-width row directly under the parent, indented to where the new
+   subtask will land. It is one node — a title and optional skills — not a recursive tree. Leaving
+   the skills unticked omits the key entirely from the request body, which is how the backend is
+   told to infer them (§5), exactly as on the create page.
+4. Submitting calls the same `useCreateTask()` mutation the create page uses, with
+   `{ title, parentId, skillIds? }`. Success invalidates `['tasks']`, the list refetches, and the
+   new row simply appears in its place in the tree — there is no client-side insert to get wrong.
+5. On success the page unfolds the parent (a new subtask created into a folded row would be a write
+   with nothing to show for it), marks the new row for a one-shot settle, and writes a sentence into
+   a `role="status"` live region so a screen-reader user hears what a sighted user watched happen.
+   `TaskRow` handles the part that needs a real DOM node: putting focus back on the **Add subtask**
+   button, which is also the fastest place to be if the next thing you want is another subtask.
+
+Two rules the server enforces on attach, and how the form treats them differently:
+
+- **The parent must not be Done.** Rule B means a task is only Done once its whole subtree is, so
+  "this task is Done" and "the server will refuse this" are the same fact — the client can know it
+  without asking. The submit is disabled with the reason printed beside it, rather than letting you
+  type a subtask and then throwing it away.
+- **The tree must not pass five levels.** Also knowable up front, and handled by not offering the
+  action at all (step 1).
+
+Anything else the server rejects — a parent deleted in another tab, a validation error — arrives as
+`createTask.error.message` inside the composer, with the typed title still in the field.
+
+## 8. The design system: two inks on paper
 
 Every colour, size and radius in this app is declared once, in the `@theme` block of `index.css`, and
 no component is allowed to invent one. That single rule is most of what "a design system" means in
@@ -250,7 +294,7 @@ That is why `microLabelClass` — the only class in the app that uppercases anyt
 on decorative text and `<th>` column headers, never on a label, legend, button or option. If you add
 a micro-label somewhere new, check first whether its text is somebody's accessible name.
 
-## 8. Running and testing
+## 9. Running and testing
 
 From the repo root (all commands use the npm workspace, not `apps/web` directly):
 

@@ -244,7 +244,11 @@ Two pages, matching the assignment's wireframes:
   1 unassigned*) gives the shape of the list before a single row is read. Any task with subtasks can be folded shut
   from the gutter — the folded row says what it is standing in for (*3 subtasks hidden*, counting the whole subtree),
   numbering and the census are unchanged by folding, and *Expand all* / *Collapse all* appear only when the list
-  actually has a branch in it. Status and assignee are inline `<select>`s
+  actually has a branch in it. Each row also offers *Add subtask*, which opens a one-node composer under that row and
+  posts it with the parent's id — the API has always accepted `parentId`, so this is the UI catching up with it, not a
+  new capability. (Part 4.3's nested creation lives on the Create Task page and is unchanged.) A Done parent says why
+  it can't take one instead of letting you write a subtask the server would refuse, and no row five levels deep offers
+  the action at all. Status and assignee are inline `<select>`s
   that save immediately; the assignee list disables ineligible developers and says which skill they lack; a parent that
   still has unfinished subtasks says so under its status control (*0/2 subtasks done*) **before** you try, while
   leaving Done selectable so the server stays the one that enforces Rule B; a rejected change (409) shows the server's
@@ -253,7 +257,13 @@ Two pages, matching the assignment's wireframes:
 - **Create Task (`/tasks/new`)** — a title, optional skills, and nested subtasks to any shape up to depth 5, submitted as
   one tree; the details are in the next section. There is no assignee field — assignment happens on the list.
 
-![The Task List: hierarchical numbering, inline status and assignee, AI-inferred tag](docs/images/task-list.png)
+![The Task List: a folded subtree, hierarchical numbering, inline status and assignee, AI-inferred tag](docs/images/task-list.png)
+
+*Task 2 is folded — its row says what it is standing in for, and 3 keeps the number it always had. Task 1 is pointed at, so its Add subtask action is showing.*
+
+![The Add subtask composer, open under an existing task](docs/images/add-subtask.png)
+
+*Add subtask opens a one-node composer under the row it belongs to, naming what it is adding to. Leave the skills unticked and they are inferred from the title, exactly as on the Create Task page.*
 
 State management is intentionally minimal: TanStack Query owns server state (fetching, caching, invalidation after a
 mutation); a `useReducer` over an immutable tree owns the create form; there is no global store. Styling is Tailwind v4
@@ -421,6 +431,8 @@ logs), `@types/*`. Every version is pinned exactly and installed from the commit
 
 - Reopening a subtask under a done parent is rejected rather than cascading the reopen up the tree.
 - No task deletion, list filtering/search, or optimistic UI updates.
+- Folding is a per-session reading choice held in component state: it is not persisted across a reload, and a task added
+  from the list is placed by the server's ordering (last among its siblings), not inserted client-side.
 - Removing a subtask in the create form asks for confirmation rather than offering undo.
 - Tailwind v4 targets modern browsers (Safari 16.4+, Chrome 111+, Firefox 128+).
 - Skill inference is synchronous inside the create request (worst case ≈ 15 s when every model times out); an async

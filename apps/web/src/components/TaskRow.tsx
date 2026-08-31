@@ -20,12 +20,23 @@
 // reports the click (`onToggleCollapse`) and, when it is the one standing shut, says how many rows
 // it is standing in for. Nothing here reads or writes the fold state itself, which is why folding
 // can never disagree with what the table shows.
-import type { Developer, TaskListRow, TaskStatus } from '@htx/shared';
-import { countDoneDescendants } from '@htx/shared';
+//
+// Adding a subtask works the same way: the page decides which single row (if any) has its composer
+// open, so opening one anywhere closes the last. This row renders the action, renders
+// `AddSubtaskForm` in a full-width row underneath itself when it is the chosen one, and owns one
+// imperative detail the page can't — a `ref` to its own Add subtask button, so that cancelling or
+// finishing hands focus back to the control the user came from instead of dropping it on `<body>`.
+// The action is absent at depth 5 (`MAX_TASK_DEPTH`), because there is nowhere left to put a child
+// and offering a button the server would refuse is worse than not offering one.
+import { useRef } from 'react';
+import type { Developer, Task, TaskListRow, TaskStatus } from '@htx/shared';
+import { MAX_TASK_DEPTH, countDoneDescendants } from '@htx/shared';
+import AddSubtaskForm from './AddSubtaskForm';
 import AssigneeSelect from './AssigneeSelect';
 import SkillBadges from './SkillBadges';
 import StatusSelect from './StatusSelect';
 import SubtaskToggle from './SubtaskToggle';
+import { quietButtonClass } from './buttonStyles';
 import { microTextClass, taskNumberClass } from './typeStyles';
 import { useUpdateTask } from '../api/hooks';
 
@@ -43,6 +54,13 @@ interface TaskRowProps {
   /** True when this task's subtree is folded away. Always false for a task with no subtasks. */
   collapsed: boolean;
   onToggleCollapse: () => void;
+  /** True when this is the one row whose Add subtask composer is open. */
+  composerOpen: boolean;
+  onOpenComposer: () => void;
+  onCloseComposer: () => void;
+  onSubtaskCreated: (created: Task) => void;
+  /** True for a subtask that has just been added, for the one-shot settle on its new row. */
+  highlighted: boolean;
 }
 
 export default function TaskRow({
@@ -51,9 +69,31 @@ export default function TaskRow({
   assignmentUnavailable,
   collapsed,
   onToggleCollapse,
+  composerOpen,
+  onOpenComposer,
+  onCloseComposer,
+  onSubtaskCreated,
+  highlighted,
 }: TaskRowProps) {
   const { task, number, depth, descendantCount } = row;
   const updateTask = useUpdateTask();
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+
+  // A subtask of this row would sit one level deeper, so the deepest row that can take one is the
+  // second-to-last level. Nothing is rendered below that: see the header comment.
+  const canAddSubtask = depth < MAX_TASK_DEPTH - 1;
+
+  const closeComposer = () => {
+    onCloseComposer();
+    addButtonRef.current?.focus();
+  };
+
+  const handleCreated = (created: Task) => {
+    onSubtaskCreated(created);
+    // The composer is about to unmount; land focus back on the control that opened it, which is
+    // also the fastest place to be if the next thing you want is another subtask.
+    addButtonRef.current?.focus();
+  };
 
   const handleStatusChange = (status: TaskStatus) => {
     updateTask.mutate({ id: task.id, status });
@@ -75,7 +115,11 @@ export default function TaskRow({
 
   return (
     <>
-      <tr className="border-b border-rule transition-colors last:border-b-0 hover:bg-surface">
+      <tr
+        className={`group/row border-b border-rule transition-colors last:border-b-0 hover:bg-surface ${
+          highlighted ? 'motion-safe:animate-ink-settle' : ''
+        }`}
+      >
         <td className="py-3 pl-3 align-top">
           {hasSubtasks ? (
             <SubtaskToggle
@@ -101,7 +145,9 @@ export default function TaskRow({
             {/* A folded row says exactly what it is hiding. A bare count chip would tell you
                 something is missing without telling you how much, which is the whole question. */}
             {collapsed && (
-              <p className={`mt-1 ${microTextClass}`}>{pluralSubtasks(descendantCount)} hidden</p>
+              <p className={`mt-1 whitespace-nowrap ${microTextClass}`}>
+                {pluralSubtasks(descendantCount)} hidden
+              </p>
             )}
           </div>
         </td>
@@ -120,7 +166,7 @@ export default function TaskRow({
               onChange={handleStatusChange}
             />
             {hasUnfinishedSubtasks && (
-              <p className={microTextClass}>
+              <p className={`whitespace-nowrap ${microTextClass}`}>
                 {doneDescendants}/{descendantCount} subtasks done
               </p>
             )}
@@ -134,10 +180,57 @@ export default function TaskRow({
             onChange={handleAssigneeChange}
           />
         </td>
+        <td className="px-3 py-3 align-top">
+          {canAddSubtask && (
+            <button
+              type="button"
+              ref={addButtonRef}
+              onClick={onOpenComposer}
+              aria-label={`Add subtask to ${task.title}`}
+              // Present in the DOM and in the tab order at all times; only its ink is held back
+              // until the row is pointed at or the button itself takes focus, so a full table of
+              // buttons doesn't compete with the rows for attention. `focus`, not `focus-visible`:
+              // focus lands here programmatically after Cancel, which a mouse user must still see.
+              // The `hover: none` clause is for touch, where a hover-only reveal never happens.
+              className={`${quietButtonClass} whitespace-nowrap ${
+                composerOpen
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover/row:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100'
+              }`}
+            >
+              Add subtask
+            </button>
+          )}
+        </td>
       </tr>
+      {composerOpen && (
+        <tr className="border-b border-rule">
+          <td colSpan={7} className="p-0">
+            {/* Indented to where the new subtask will land, so the composer sits in the row it is
+                about to create rather than floating over the table.
+
+                `sticky left-0` and the viewport cap are what make it usable on a phone. The table
+                is 820px wide and scrolls horizontally inside its own container, so a form that
+                simply filled this cell would be 820px too — its field running off the side of a
+                390px screen. Pinned to the scroller's left edge and capped at the viewport, the
+                composer stays whole and in place however far the table is scrolled. */}
+            <div
+              className="sticky left-0 max-w-[calc(100vw-2rem)] pb-4 pr-4 pt-1"
+              style={{ paddingLeft: 12 + (depth + 1) * INDENT_PER_DEPTH_PX }}
+            >
+              <AddSubtaskForm
+                parent={task}
+                parentNumber={number}
+                onCreated={handleCreated}
+                onCancel={closeComposer}
+              />
+            </div>
+          </td>
+        </tr>
+      )}
       {updateTask.isError && (
         <tr>
-          <td colSpan={6} className="px-3 pb-3">
+          <td colSpan={7} className="px-3 pb-3">
             <p
               role="alert"
               className="border-l-2 border-danger bg-danger-soft px-3 py-2 text-sm text-danger"
