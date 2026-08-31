@@ -2,7 +2,7 @@
   "name": "htx-task-assignment",
   "private": true,
   "version": "1.0.0",
-  "description": "Task Assignment App — assign tasks to developers by skill, with subtasks and LLM-inferred skills",
+  "description": "Task Assignment App \u2014 assign tasks to developers by skill, with subtasks and LLM-inferred skills",
   "type": "module",
   "engines": {
     "node": ">=24.15"
@@ -23,6 +23,8 @@
     "test": "npm run test --workspaces --if-present",
     "db:up": "docker compose up -d db",
     "db:migrate": "npm run migrate -w @htx/api",
+    "db:demo": "npm run demo -w @htx/api",
+    "db:empty": "npm run empty -w @htx/api",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --config e2e/playwright.config.ts --ui"
   },

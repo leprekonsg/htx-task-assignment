@@ -11,6 +11,7 @@ Fastify 5 · React 19 (Vite) · Gemini API · Docker Compose**.
 
 - [Where each requirement lives](#where-each-requirement-lives)
 - [Quick start (Docker)](#quick-start-docker)
+  - [Two states you can load](#two-states-you-can-load)
 - [Local development](#local-development)
 - [Configuration](#configuration)
 - [System design](#system-design)
@@ -62,6 +63,27 @@ developers from the assignment: Alice (Frontend), Bob (Backend), Carol (Frontend
 Without a `GEMINI_API_KEY` everything still works; tasks created without skills are simply stored as *not inferred*
 (see [Skill inference](#skill-inference-part-5)). To start from an empty database again: `docker compose down -v`.
 
+### Two states you can load
+
+A fresh stack starts with no tasks, which is the right first impression but a poor way to *see* the app. One command
+fills it with a tree per thing the Task List has to render, and another empties it again:
+
+```bash
+docker compose run --rm api node dist/db/cli.js demo    # 16 tasks: the state described below
+docker compose run --rm api node dist/db/cli.js empty   # back to no tasks
+```
+
+Both replace the tasks only — the seeded developers and skills are identical in either state — and both are safe to
+re-run: ids restart at 1, so the demo state is the same every time. In local development the same two states are
+`npm run db:demo` and `npm run db:empty`.
+
+The demo state is a checklist of the UI rather than a plausible backlog. It has a branch deep enough to be worth
+folding, a five-level chain (the API's limit, where **Add subtask** is no longer offered), a Done parent whose whole
+subtree is Done (where **Add subtask** is disabled and says why), a leaf with nothing under it, all three
+`skills_source` values — chosen, AI-inferred, not inferred — assigned and unassigned rows, and a task needing both
+skills, which only Carol can hold. `apps/api/test/demo.test.ts` loads it and checks it against Rule A, Rule B and the
+depth limit, so the fixture cannot drift into a state the API itself would have refused.
+
 ## Local development
 
 Prerequisites: Node 24 (`.nvmrc`), npm 11, Docker (for Postgres only).
@@ -70,6 +92,7 @@ Prerequisites: Node 24 (`.nvmrc`), npm 11, Docker (for Postgres only).
 npm ci                 # installs every workspace from the single lockfile
 npm run db:up          # postgres:17 on localhost:5432 (user/password/db: taskapp)
 npm run db:migrate     # apply migrations + seed
+npm run db:demo        # load the demo tasks (npm run db:empty to remove them again)
 npm run dev            # shared (tsc -w) + api (tsx watch, :3000) + web (vite, :5173, proxies /api → :3000)
 ```
 
@@ -259,11 +282,11 @@ Two pages, matching the assignment's wireframes:
 
 ![The Task List: a folded subtree, hierarchical numbering, inline status and assignee, AI-inferred tag](docs/images/task-list.png)
 
-*Task 2 is folded — its row says what it is standing in for, and 3 keeps the number it always had. Task 1 is pointed at, so its Add subtask action is showing.*
+*The demo state (`db:demo`), so this is reproducible. Task 4 is folded — its row says what it is standing in for, and 5 keeps the number it always had. Task 1 is pointed at, so its Add subtask action is showing. 1.3 had no skills and no model available, so it says so rather than pretending to none.*
 
 ![The Add subtask composer, open under an existing task](docs/images/add-subtask.png)
 
-*Add subtask opens a one-node composer under the row it belongs to, naming what it is adding to. Leave the skills unticked and they are inferred from the title, exactly as on the Create Task page.*
+*Add subtask opens a one-node composer under the row it belongs to, naming what it is adding to. Leave the skills unticked and they are inferred from the title, exactly as on the Create Task page. Tasks 2 and 4 are folded here — folding and composing are independent, and a draft survives either.*
 
 State management is intentionally minimal: TanStack Query owns server state (fetching, caching, invalidation after a
 mutation); a `useReducer` over an immutable tree owns the create form; there is no global store. Styling is Tailwind v4
@@ -343,24 +366,25 @@ Behaviour worth knowing when you try it:
 
 ## Testing
 
-Four layers, 148 tests in total; every layer runs in CI.
+Four layers, 186 tests in total; every layer runs in CI.
 
 ```bash
 npm test                          # shared + api + web (API tests need `npm run db:up` first)
-npx vitest run --root apps/api    # API only: 40 unit + 47 integration tests against Postgres (taskapp_test database)
-npx vitest run --root apps/web    # web only: 41 tests, Testing Library + jsdom, fetch mocked
-npm run test:e2e                  # 10 Playwright tests against the real Docker Compose stack (builds and starts it)
+npx vitest run --root apps/api    # API only: 40 unit + 54 integration tests against Postgres (taskapp_test database)
+npx vitest run --root apps/web    # web only: 59 tests, Testing Library + jsdom, fetch mocked
+npm run test:e2e                  # 13 Playwright tests against the real Docker Compose stack (builds and starts it)
 ```
 
-- **shared (10)** — Rule A helpers, request schemas (title bounds, duplicate skill ids, depth limit), tree numbering.
-- **api (87)** — every error code has a test that triggers it; nested create persists all nodes and rolls back entirely
+- **shared (20)** — Rule A helpers, request schemas (title bounds, duplicate skill ids, depth limit), tree numbering,
+  the visibility-aware traversal folding uses, and the descendant counts Rule B is stated in.
+- **api (94)** — every error code has a test that triggers it; nested create persists all nodes and rolls back entirely
   on an invalid deep node; Rule A for each seeded developer; Rule B for done / reopen / add-under-done / grandchild
   cases; the Rule B **concurrency race** (25 rounds, invariant asserted after each); inference with a fake classifier
   (LLM result, failure ⇒ `unresolved`, a genuinely empty result kept, unknown skill names filtered and an all-unknown
   item treated as unresolved, one batched call per request); the
   classifier chain, prompt and JSON extraction (including Gemma-style prose around the JSON); config parsing;
-  `/docs/json` validity.
-- **web (41)** — form reducer (paths, structural sharing, depth cap, payload shape, numbering, node counts, first
+  `/docs/json` validity; and the demo fixture, loaded and then checked against Rule A, Rule B and the depth limit.
+- **web (59)** — form reducer (paths, structural sharing, depth cap, payload shape, numbering, node counts, first
   missing title); Task List rendering (numbering, badges, disabled ineligible developers, PATCH on change, 409 message,
   developers-failed banner with assignment disabled); Create Task: nesting and submitted payload, submit with an empty
   title focuses and names the offending task, Add subtask focuses the new title, Remove confirms for a subtree and returns

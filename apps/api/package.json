@@ -9,6 +9,8 @@
     "build": "tsc -b",
     "start": "node dist/server.js",
     "migrate": "tsx --env-file=../../.env src/db/cli.ts migrate",
+    "demo": "tsx --env-file=../../.env src/db/cli.ts demo",
+    "empty": "tsx --env-file=../../.env src/db/cli.ts empty",
     "test": "vitest run",
     "test:watch": "vitest"
   },
