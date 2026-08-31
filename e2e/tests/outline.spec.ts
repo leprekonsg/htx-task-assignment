@@ -1,7 +1,8 @@
 // Part 4 from the reader's side: a task tree you can fold, and extend without leaving the list.
-// One journey, in the order someone actually works — fold a subtree away and bring it back, add a
-// subtask to an existing task in place, then reload to prove the write reached the server rather
-// than only the page.
+// The main journey runs in the order someone actually works — fold a subtree away and bring it
+// back, get interrupted mid-draft, add a subtask to an existing task in place, then reload to prove
+// the write reached the server rather than only the page. Two shorter tests cover the ways it can
+// refuse or fail: a Done parent, and a skill list that doesn't load.
 import { expect, test } from '@playwright/test';
 import { SKILL_IDS, createTaskViaApi, numberCell, rowFor, uniqueTitle } from './helpers.js';
 
@@ -47,7 +48,21 @@ test('folds a subtree, adds a subtask in place, and keeps it across a reload', a
   await page.getByRole('button', { name: `Add subtask to ${parent}` }).click();
   await expect(page.getByText(`New subtask of ${parentNumber} — ${parent}`)).toBeVisible();
 
-  await page.getByLabel('Title').fill(added);
+  // A half-written subtask is not lost by looking somewhere else. Opening another row's composer
+  // really does unmount this one — the draft is the page's, not the form's.
+  await page.getByLabel('Title').fill('Half-written');
+  await page.getByRole('button', { name: `Add subtask to ${first}` }).click();
+  await expect(page.getByLabel('Title')).toHaveValue('');
+
+  await page.getByRole('button', { name: `Add subtask to ${parent}` }).click();
+  const titleField = page.getByLabel('Title');
+  await expect(titleField).toHaveValue('Half-written');
+  // And the caret is after the restored text, so typing continues the title instead of preceding it.
+  expect(await titleField.evaluate((el: HTMLInputElement) => el.selectionStart)).toBe(
+    'Half-written'.length,
+  );
+
+  await titleField.fill(added);
   await page
     .getByRole('group', { name: 'Skills for the new subtask' })
     .getByLabel('Frontend')
@@ -97,4 +112,54 @@ test('will not attach a subtask under a task that is Done, and says so before yo
   });
   expect(rejected.status()).toBe(409);
   expect(await rejected.json()).toMatchObject({ error: { code: 'PARENT_IS_DONE' } });
+});
+
+test('holds the submit when the skill list fails, then recovers in place', async ({
+  page,
+  request,
+}) => {
+  const parent = uniqueTitle('Recoverable feature');
+  await createTaskViaApi(request, { title: parent, skillIds: [SKILL_IDS.Backend] });
+
+  // Fail `GET /api/skills` until the test says otherwise. The app's QueryClient keeps TanStack's
+  // default three retries with backoff, so an outage takes a few seconds to become a visible error —
+  // failing only the first request would be silently repaired by the retry and prove nothing.
+  let skillsFail = true;
+  await page.route('**/api/skills', async (route) => {
+    if (!skillsFail) return route.continue();
+    return route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: { code: 'INTERNAL_ERROR', message: 'Failed to load skills.' },
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: `Add subtask to ${parent}` }).click();
+
+  const draft = uniqueTitle('Written before the outage');
+  await page.getByLabel('Title').fill(draft);
+  await expect(
+    page.getByText('Add subtask is unavailable until the skill list loads.'),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('button', { name: 'Add subtask', exact: true })).toBeDisabled();
+
+  skillsFail = false;
+  await page.getByRole('button', { name: 'Retry' }).click();
+
+  // Skills become choosable and nothing typed had to be typed again.
+  await expect(page.getByRole('group', { name: 'Skills for the new subtask' })).toBeVisible();
+  await expect(page.getByLabel('Title')).toHaveValue(draft);
+  await expect(page.getByRole('button', { name: 'Add subtask', exact: true })).toBeEnabled();
+
+  // Tick a skill so the create doesn't depend on the live inference chain — this test is about
+  // recovering from the outage, not about Part 5.
+  await page
+    .getByRole('group', { name: 'Skills for the new subtask' })
+    .getByLabel('Backend')
+    .check();
+  await page.getByRole('button', { name: 'Add subtask', exact: true }).click();
+  await expect(rowFor(page, draft)).toBeVisible();
 });

@@ -427,13 +427,25 @@ describe('TaskListPage add subtask', () => {
   }
 
   function mockApi(initial: Task[]) {
-    const state = { tasks: initial, nextId: 100, rejectWith: null as ErrorResponse | null };
+    const state = {
+      tasks: initial,
+      nextId: 100,
+      rejectWith: null as ErrorResponse | null,
+      // Flipped by a test to fail `GET /api/skills` and then let a Retry succeed.
+      skillsOk: true,
+    };
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? 'GET';
       if (method === 'GET' && url === '/api/tasks') return jsonResponse(200, state.tasks);
       if (method === 'GET' && url === '/api/developers') return jsonResponse(200, developers);
-      if (method === 'GET' && url === '/api/skills') return jsonResponse(200, [frontend, backend]);
+      if (method === 'GET' && url === '/api/skills') {
+        return state.skillsOk
+          ? jsonResponse(200, [frontend, backend])
+          : jsonResponse(500, {
+              error: { code: 'INTERNAL_ERROR', message: 'Failed to load skills.' },
+            });
+      }
       if (method === 'POST' && url === '/api/tasks') {
         if (state.rejectWith) return jsonResponse(409, state.rejectWith);
         const body = JSON.parse(String(init?.body)) as { title: string; parentId?: number };
@@ -592,5 +604,132 @@ describe('TaskListPage add subtask', () => {
 
     expect(screen.getByRole('button', { name: 'Add subtask to L4' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add subtask to L5' })).toBeNull();
+  });
+
+  // ── Draft survival ───────────────────────────────────────────────────────────────────────────
+  //
+  // The composer unmounts for three reasons that are not "I've finished with this": another row's
+  // composer opening, this row being folded away, and Collapse all. None of them may cost the user
+  // what they had typed.
+
+  it("keeps a half-written subtask when another row's composer opens", async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API'), node(3, 'Design login page')]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    await user.type(screen.getByLabelText('Title'), 'Add fixtures');
+    await user.click(
+      within(screen.getByRole('group', { name: 'Skills for the new subtask' })).getByLabelText(
+        'Backend',
+      ),
+    );
+
+    // Opening another one really does unmount the first — this is not a hidden second composer.
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Design login page' }));
+    expect(screen.getByText(/New subtask of/)).toHaveTextContent('Design login page');
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+
+    // Coming back finds it exactly as it was, caret after the text rather than in front of it.
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    const input = screen.getByLabelText('Title') as HTMLInputElement;
+    expect(input).toHaveValue('Add fixtures');
+    expect(input.selectionStart).toBe('Add fixtures'.length);
+    expect(
+      within(screen.getByRole('group', { name: 'Skills for the new subtask' })).getByLabelText(
+        'Backend',
+      ),
+    ).toBeChecked();
+  });
+
+  it('keeps a half-written subtask through Collapse all, which unmounts its row', async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API', [node(2, 'Write tests')])]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    // Compose under the *subtask*, so folding its parent takes the composer down with the row.
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Write tests' }));
+    await user.type(screen.getByLabelText('Title'), 'Cover the reducer');
+
+    await user.click(screen.getByRole('button', { name: 'Collapse all' }));
+    expect(screen.queryByLabelText('Title')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Expand all' }));
+    expect(screen.getByLabelText('Title')).toHaveValue('Cover the reducer');
+  });
+
+  it('forgets the draft on Cancel and after a successful create, the two exits the user chooses', async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API')]);
+    renderPage();
+    await screen.findByText('Build API');
+    const action = screen.getByRole('button', { name: 'Add subtask to Build API' });
+
+    await user.click(action);
+    await user.type(screen.getByLabelText('Title'), 'Abandoned');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(action);
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+
+    await user.type(screen.getByLabelText('Title'), 'Add fixtures');
+    await user.click(screen.getByRole('button', { name: 'Add subtask' }));
+    expect(await screen.findByText('Add fixtures')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    expect(screen.getByLabelText('Title')).toHaveValue('');
+  });
+
+  it('offers Retry when the skill list fails, and keeps the typed title through the recovery', async () => {
+    const user = userEvent.setup();
+    const state = mockApi([node(1, 'Build API')]);
+    state.skillsOk = false;
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+    await user.type(screen.getByLabelText('Title'), 'Add fixtures');
+    expect(screen.getByRole('button', { name: 'Add subtask' })).toBeDisabled();
+    expect(
+      screen.getByText('Add subtask is unavailable until the skill list loads.'),
+    ).toBeInTheDocument();
+
+    state.skillsOk = true;
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+    // Recovered in place: skills become choosable and nothing typed had to be typed again.
+    expect(
+      await screen.findByRole('group', { name: 'Skills for the new subtask' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Title')).toHaveValue('Add fixtures');
+    expect(screen.getByRole('button', { name: 'Add subtask' })).toBeEnabled();
+  });
+
+  it('announces a second subtask even when it is worded exactly like the first', async () => {
+    const user = userEvent.setup();
+    mockApi([node(1, 'Build API')]);
+    renderPage();
+    await screen.findByText('Build API');
+    // The page's live region: permanently mounted, so this reference stays good all test.
+    const liveRegion = screen.getByRole('status');
+
+    const addFixtures = async () => {
+      await user.click(screen.getByRole('button', { name: 'Add subtask to Build API' }));
+      await user.type(screen.getByLabelText('Title'), 'Add fixtures');
+      await user.click(screen.getByRole('button', { name: 'Add subtask' }));
+    };
+
+    await addFixtures();
+    await waitFor(() =>
+      expect(liveRegion).toHaveTextContent('Added "Add fixtures" under "Build API"'),
+    );
+    const firstAnnouncement = liveRegion.firstElementChild;
+
+    await addFixtures();
+    // Same sentence, but a *new* node — which is the mutation a screen reader actually reports.
+    // Re-rendering identical text into the region would have said nothing the second time.
+    await waitFor(() => expect(liveRegion.firstElementChild).not.toBe(firstAnnouncement));
+    expect(liveRegion).toHaveTextContent('Added "Add fixtures" under "Build API"');
   });
 });

@@ -26,11 +26,14 @@
 // `AddSubtaskForm` in a full-width row underneath itself when it is the chosen one, and owns one
 // imperative detail the page can't — a `ref` to its own Add subtask button, so that cancelling or
 // finishing hands focus back to the control the user came from instead of dropping it on `<body>`.
+// The composer's half-written contents pass straight through this row: they belong to the page,
+// because this row is exactly what stops existing when its parent is folded (see AddSubtaskForm).
 // The action is absent at depth 5 (`MAX_TASK_DEPTH`), because there is nowhere left to put a child
 // and offering a button the server would refuse is worse than not offering one.
 import { useRef } from 'react';
 import type { Developer, Task, TaskListRow, TaskStatus } from '@htx/shared';
 import { MAX_TASK_DEPTH, countDoneDescendants } from '@htx/shared';
+import type { SubtaskDraft } from './AddSubtaskForm';
 import AddSubtaskForm from './AddSubtaskForm';
 import AssigneeSelect from './AssigneeSelect';
 import SkillBadges from './SkillBadges';
@@ -58,6 +61,9 @@ interface TaskRowProps {
   composerOpen: boolean;
   onOpenComposer: () => void;
   onCloseComposer: () => void;
+  /** The half-written subtask for this row, held by the page so it outlives the composer. */
+  draft: SubtaskDraft;
+  onDraftChange: (draft: SubtaskDraft) => void;
   onSubtaskCreated: (created: Task) => void;
   /** True for a subtask that has just been added, for the one-shot settle on its new row. */
   highlighted: boolean;
@@ -72,6 +78,8 @@ export default function TaskRow({
   composerOpen,
   onOpenComposer,
   onCloseComposer,
+  draft,
+  onDraftChange,
   onSubtaskCreated,
   highlighted,
 }: TaskRowProps) {
@@ -221,6 +229,8 @@ export default function TaskRow({
               <AddSubtaskForm
                 parent={task}
                 parentNumber={number}
+                draft={draft}
+                onDraftChange={onDraftChange}
                 onCreated={handleCreated}
                 onCancel={closeComposer}
               />

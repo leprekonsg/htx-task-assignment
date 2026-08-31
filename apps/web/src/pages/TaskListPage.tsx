@@ -44,10 +44,22 @@
 // the new row for its one-shot settle, announce it in a live region for anyone who can't see that
 // settle, and close the composer. `TaskRow` handles the fifth, which needs a real DOM node rather
 // than state: putting focus back on the Add subtask button it came from.
+//
+// `drafts` is why closing a composer is cheap. The composer unmounts whenever another one opens, or
+// whenever its row is folded away by a parent or by Collapse all — none of which mean the user is
+// finished writing. Holding the half-written subtask here, keyed by parent id, makes those unmounts
+// survivable; a draft is discarded only on Cancel or a successful create, the two exits the user
+// actually chose. It is keyed by id for the same reason `collapsedIds` is: numbers move.
+//
+// `announcement` carries the created task's id alongside its text. Two subtasks with the same title
+// under the same parent produce the same sentence, and re-rendering identical text into a live
+// region is not a mutation, so the second add would go unannounced. Keying the region's child by
+// that id replaces the node instead of updating it, which is a mutation, so every add is spoken.
 import { useState } from 'react';
 import { useLocation } from 'react-router';
 import type { Task } from '@htx/shared';
 import { collapsibleTaskIds, flattenTaskTree, flattenVisibleTaskTree } from '@htx/shared';
+import type { SubtaskDraft } from '../components/AddSubtaskForm';
 import EmptyState from '../components/EmptyState';
 import ErrorBanner from '../components/ErrorBanner';
 import FlashBanner from '../components/FlashBanner';
@@ -56,6 +68,9 @@ import TaskRow from '../components/TaskRow';
 import { quietButtonClass } from '../components/buttonStyles';
 import { displayClass, microLabelClass } from '../components/typeStyles';
 import { useDevelopers, useTasks } from '../api/hooks';
+
+/** What a row's composer opens with before anything has been typed into it. */
+const EMPTY_DRAFT: SubtaskDraft = { title: '', skillIds: [] };
 
 export default function TaskListPage() {
   const tasksQuery = useTasks();
@@ -66,8 +81,9 @@ export default function TaskListPage() {
   );
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<number>>(() => new Set());
   const [composerFor, setComposerFor] = useState<number | null>(null);
+  const [drafts, setDrafts] = useState<ReadonlyMap<number, SubtaskDraft>>(() => new Map());
   const [addedTaskId, setAddedTaskId] = useState<number | null>(null);
-  const [announcement, setAnnouncement] = useState('');
+  const [announcement, setAnnouncement] = useState<{ id: number; message: string } | null>(null);
 
   const tasks = tasksQuery.data ?? [];
   const allRows = flattenTaskTree(tasks);
@@ -89,6 +105,23 @@ export default function TaskListPage() {
       return next;
     });
 
+  const changeDraft = (parentId: number, draft: SubtaskDraft) =>
+    setDrafts((current) => new Map(current).set(parentId, draft));
+
+  /** Forget a half-written subtask. Only ever called for an exit the user chose. */
+  const discardDraft = (parentId: number) =>
+    setDrafts((current) => {
+      if (!current.has(parentId)) return current;
+      const next = new Map(current);
+      next.delete(parentId);
+      return next;
+    });
+
+  const closeComposer = (parentId: number) => {
+    setComposerFor(null);
+    discardDraft(parentId);
+  };
+
   const handleSubtaskCreated = (parent: Task, created: Task) => {
     setCollapsedIds((current) => {
       if (!current.has(parent.id)) return current;
@@ -97,8 +130,12 @@ export default function TaskListPage() {
       return next;
     });
     setAddedTaskId(created.id);
-    setAnnouncement(`Added "${created.title}" under "${parent.title}"`);
+    setAnnouncement({
+      id: created.id,
+      message: `Added "${created.title}" under "${parent.title}"`,
+    });
     setComposerFor(null);
+    discardDraft(parent.id);
   };
 
   // A one-line census of the list — count, done, unassigned — read before a single row is read.
@@ -130,7 +167,7 @@ export default function TaskListPage() {
           once for everyone else. Rendered empty from the start: a live region added to the page at
           the same moment as its text is often not announced at all. */}
       <p role="status" className="sr-only">
-        {announcement}
+        {announcement && <span key={announcement.id}>{announcement.message}</span>}
       </p>
 
       {tasksQuery.isError && (
@@ -222,7 +259,9 @@ export default function TaskListPage() {
                       onToggleCollapse={() => toggleCollapsed(row.task.id)}
                       composerOpen={composerFor === row.task.id}
                       onOpenComposer={() => setComposerFor(row.task.id)}
-                      onCloseComposer={() => setComposerFor(null)}
+                      onCloseComposer={() => closeComposer(row.task.id)}
+                      draft={drafts.get(row.task.id) ?? EMPTY_DRAFT}
+                      onDraftChange={(draft) => changeDraft(row.task.id, draft)}
                       onSubtaskCreated={(created) => handleSubtaskCreated(row.task, created)}
                       highlighted={addedTaskId === row.task.id}
                     />

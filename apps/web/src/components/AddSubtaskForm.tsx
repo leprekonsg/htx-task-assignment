@@ -15,23 +15,42 @@
 //     button stays live and pressing it shows the reason and puts the cursor back in the field.
 //   - The skill catalogue is reference data the form should not proceed without: if it can't be
 //     loaded, skills silently become "inferred" without the user having chosen that, so the submit
-//     is held and the status line says why.
+//     is held. An `ErrorBanner` with Retry offers the way out and the status line says why the
+//     button is off — the same recovery, in the same words, as the full page.
 //
 // A Done parent is the one case where the button really is disabled: the server would reject the
 // attach, and here we know that in advance without asking it — Rule B means a task can only be Done
 // once its whole subtree is, so "this task is Done" and "the server will refuse" are the same fact.
 // The explanation sits next to the disabled button rather than arriving as an error afterwards.
-import { useState, type FormEvent } from 'react';
+//
+// ── Why the draft lives on the page, not here ──────────────────────────────────────────────────
+//
+// The title and skills are props, not state. This component unmounts for reasons that have nothing
+// to do with the user abandoning it: opening a composer on another row, folding this row's parent,
+// or pressing Collapse all. If it owned the half-written subtask, all three would throw it away
+// without a word. TaskListPage keeps drafts keyed by parent id and discards one only on Cancel or a
+// successful create, so the two deliberate exits are the only ones that lose anything.
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Task } from '@htx/shared';
+import ErrorBanner from './ErrorBanner';
 import SkillCheckboxes from './task-form/SkillCheckboxes';
 import { primaryButtonClass, secondaryButtonClass } from './buttonStyles';
 import { microTextClass, taskNumberClass } from './typeStyles';
 import { useCreateTask, useSkills } from '../api/hooks';
 
+/** One half-written subtask: everything the composer would lose if it were thrown away. */
+export interface SubtaskDraft {
+  title: string;
+  skillIds: number[];
+}
+
 interface AddSubtaskFormProps {
   parent: Task;
   /** The parent's hierarchical number ("1.2"), for naming what is being added to. */
   parentNumber: string;
+  /** What has been typed and ticked so far — owned by the page so it survives an unmount. */
+  draft: SubtaskDraft;
+  onDraftChange: (draft: SubtaskDraft) => void;
   /** Called after a successful POST, with the task the server created. */
   onCreated: (created: Task) => void;
   onCancel: () => void;
@@ -40,12 +59,16 @@ interface AddSubtaskFormProps {
 export default function AddSubtaskForm({
   parent,
   parentNumber,
+  draft,
+  onDraftChange,
   onCreated,
   onCancel,
 }: AddSubtaskFormProps) {
-  const [title, setTitle] = useState('');
-  const [skillIds, setSkillIds] = useState<number[]>([]);
+  const { title, skillIds } = draft;
+  // Deliberately *not* part of the draft: this is a response to pressing the button, not something
+  // the user wrote. Coming back to a restored draft should present the field, not an old telling-off.
   const [showTitleError, setShowTitleError] = useState(false);
+  const titleRef = useRef<HTMLInputElement>(null);
   const skillsQuery = useSkills();
   const createTask = useCreateTask();
 
@@ -58,10 +81,19 @@ export default function AddSubtaskForm({
   const canSubmit = !createTask.isPending && !skillsUnavailable && !parentIsDone;
   const titleMissing = title.trim().length === 0;
 
+  // Focus on open, and on reopen put the caret *after* a restored draft rather than in front of it —
+  // otherwise the first keystroke back in the field lands at the start of the title.
+  useEffect(() => {
+    const input = titleRef.current;
+    if (!input) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }, []);
+
   const status = parentIsDone
     ? `“${parent.title}” is Done, so it can't take a new subtask. Set it back to To-do or In progress first.`
     : skillsQuery.isError
-      ? "Couldn't load the skill list, so skills can't be chosen right now."
+      ? 'Add subtask is unavailable until the skill list loads.'
       : skillsQuery.isPending
         ? 'Loading skills…'
         : createTask.isPending
@@ -75,7 +107,7 @@ export default function AddSubtaskForm({
     if (!canSubmit) return;
     if (titleMissing) {
       setShowTitleError(true);
-      document.getElementById(titleId)?.focus();
+      titleRef.current?.focus();
       return;
     }
     createTask.mutate(
@@ -107,11 +139,11 @@ export default function AddSubtaskForm({
         </label>
         <input
           id={titleId}
+          ref={titleRef}
           type="text"
           required
-          autoFocus
           value={title}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
           aria-invalid={showTitleError && titleMissing ? 'true' : undefined}
           aria-describedby={showTitleError && titleMissing ? errorId : undefined}
           className={`max-w-xl rounded-sm border bg-surface-raised px-3 py-2 text-sm text-text transition-colors ${
@@ -127,17 +159,27 @@ export default function AddSubtaskForm({
         )}
       </div>
 
+      {/* A failed skill list is recoverable, so it gets the same banner and Retry the full page
+          gives it. Nothing typed is lost by retrying: the draft is the page's, not this form's. */}
+      {skillsQuery.isError && (
+        <ErrorBanner
+          message="Couldn't load the skill list, so skills can't be chosen right now."
+          onRetry={() => skillsQuery.refetch()}
+        />
+      )}
+
       {!skillsUnavailable && (
         <SkillCheckboxes
           legend="Skills for the new subtask"
           skills={skillsQuery.data ?? []}
           selectedSkillIds={skillIds}
           onToggle={(skillId) =>
-            setSkillIds((current) =>
-              current.includes(skillId)
-                ? current.filter((id) => id !== skillId)
-                : [...current, skillId].sort((a, b) => a - b),
-            )
+            onDraftChange({
+              ...draft,
+              skillIds: skillIds.includes(skillId)
+                ? skillIds.filter((id) => id !== skillId)
+                : [...skillIds, skillId].sort((a, b) => a - b),
+            })
           }
         />
       )}
@@ -164,7 +206,13 @@ export default function AddSubtaskForm({
           Cancel
         </button>
         {status && (
-          <p id={statusId} role="status" className="text-sm text-text-muted">
+          // Not a live region when the skill list failed: the ErrorBanner above is already an
+          // `alert`, and announcing the same outage twice is worse than announcing it once.
+          <p
+            id={statusId}
+            role={skillsQuery.isError && !parentIsDone ? undefined : 'status'}
+            className="text-sm text-text-muted"
+          >
             {status}
           </p>
         )}

@@ -240,6 +240,41 @@ Two rules the server enforces on attach, and how the form treats them differentl
 Anything else the server rejects — a parent deleted in another tab, a validation error — arrives as
 `createTask.error.message` inside the composer, with the typed title still in the field.
 
+### Nothing typed is lost by an unmount
+
+The composer is a short-lived component with a long-lived job. It stops existing whenever another
+row's composer opens, whenever its row is folded away by a parent, and on **Collapse all** — three
+events that mean "look at something else", never "throw my work away". So the title and skills are
+**props, not state**: `TaskListPage` holds a `Map<parentId, SubtaskDraft>` and the form reads and
+writes it. A draft is discarded on exactly two events, both of them chosen by the user — **Cancel**,
+and a successful create. Reopening a composer restores what was there and puts the caret after it,
+so the next keystroke continues the title rather than landing in front of it.
+
+Keyed by id, for the same reason `collapsedIds` is: a task's number moves when a sibling is added.
+
+The one piece of composer state that stays local is the "Title is required" flag. It is a response
+to pressing the button, not something the user wrote; coming back to a restored draft should present
+the field, not an old telling-off.
+
+### Recovering from a failed skill list
+
+If `GET /api/skills` fails the submit is held, because posting with no skills would silently hand
+the task to the inference chain (§5) without the user ever choosing that. Held is not stuck: the
+composer shows the same `ErrorBanner` with **Retry** the create page shows, and because the draft
+belongs to the page, retrying costs nothing that was typed. The line beside the disabled button says
+why it is off rather than restating the outage, and drops its `role="status"` in that one case — the
+banner is already an `alert`, and saying it twice is worse than saying it once.
+
+### Saying the same thing twice
+
+`announcement` is `{ id, message }`, not a string, and the live region renders
+`<span key={announcement.id}>`. Two subtasks with the same title under the same parent produce the
+same sentence, and re-rendering identical text into a live region is not a DOM mutation, so the
+second add would be announced to nobody. Keying the child by the created task's id replaces the node
+instead of updating it — which is a mutation, so every add is spoken. `TaskListPage.test.tsx` proves
+this by holding a reference to the region's child across two identical adds and asserting it is a
+different node.
+
 ## 8. The design system: two inks on paper
 
 Every colour, size and radius in this app is declared once, in the `@theme` block of `index.css`, and

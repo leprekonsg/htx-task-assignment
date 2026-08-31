@@ -433,6 +433,8 @@ logs), `@types/*`. Every version is pinned exactly and installed from the commit
 - No task deletion, list filtering/search, or optimistic UI updates.
 - Folding is a per-session reading choice held in component state: it is not persisted across a reload, and a task added
   from the list is placed by the server's ordering (last among its siblings), not inserted client-side.
+- An unsaved **Add subtask** draft survives switching rows, folding and Collapse all, but it lives in component state:
+  a reload discards it. Only one composer is open at a time, so subtasks are added one at a time rather than in a run.
 - Removing a subtask in the create form asks for confirmation rather than offering undo.
 - Tailwind v4 targets modern browsers (Safari 16.4+, Chrome 111+, Firefox 128+).
 - Skill inference is synchronous inside the create request (worst case ≈ 15 s when every model times out); an async
