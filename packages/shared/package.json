@@ -1,0 +1,27 @@
+{
+  "name": "@htx/shared",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Contracts shared by the API and the web app: Zod schemas, domain types, pure domain rules",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsc -b -w --preserveWatchOutput",
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}
