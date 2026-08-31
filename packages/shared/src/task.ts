@@ -40,6 +40,9 @@ export const TaskSchema = z.object({
   },
 });
 export type Task = z.infer<typeof TaskSchema>;
+// Self-referential schemas used inline (e.g. as a Fastify response schema) need a registered `id` so
+// fastify-type-provider-zod / @fastify/swagger can turn the cycle into a `$ref` component instead of erroring.
+z.globalRegistry.add(TaskSchema, { id: 'Task' });
 
 const uniqueIds = (ids: readonly number[]) => new Set(ids).size === ids.length;
 
@@ -59,6 +62,8 @@ export const TaskNodeInputSchema = z.object({
   },
 });
 export type TaskNodeInput = z.infer<typeof TaskNodeInputSchema>;
+// Same reason as TaskSchema above: this recursive schema is nested inside CreateTaskRequestSchema's body.
+z.globalRegistry.add(TaskNodeInputSchema, { id: 'TaskNodeInput' });
 
 /** Depth of a node tree: 1 for a leaf, 2 for a node with subtasks, ... */
 export function taskTreeDepth(node: { subtasks?: readonly TaskNodeInput[] | undefined }): number {

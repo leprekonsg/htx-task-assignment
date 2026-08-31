@@ -11,6 +11,7 @@ const STATUS_BY_CODE: Readonly<Record<ErrorCode, number>> = {
   SUBTASKS_NOT_DONE: 409,
   ANCESTOR_IS_DONE: 409,
   PARENT_IS_DONE: 409,
+  NOT_FOUND: 404,
   INTERNAL_ERROR: 500,
 };
 

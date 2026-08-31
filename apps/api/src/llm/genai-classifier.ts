@@ -16,6 +16,17 @@ export interface GenAiClassifierOptions {
   structuredOutput: boolean;
 }
 
+/**
+ * Shape used to PARSE the model's raw text. Deliberately looser than `responseSchema` (which enforces
+ * `skills` to be exactly the allowed names, case-sensitively): that strict schema is only right for
+ * building the `responseJsonSchema` hint sent to the model, since applying it to the actual response
+ * would reject an entire batch over one hallucinated or mis-cased skill name instead of just dropping
+ * it. `skills` filtering against the allowed list (case-insensitively) happens below, after parsing.
+ */
+const RawResponseSchema = z.object({
+  items: z.array(z.object({ ref: z.string(), skills: z.array(z.string()) })),
+});
+
 /** One model on the Gemini API, wrapped as a SkillClassifier. */
 export class GenAiClassifier implements SkillClassifier {
   readonly name: string;
@@ -60,7 +71,7 @@ export class GenAiClassifier implements SkillClassifier {
       });
       const text = response.text;
       if (!text) return { ok: false, reason: `${this.name}: empty response` };
-      const parsed = schema.safeParse(extractJson(text));
+      const parsed = RawResponseSchema.safeParse(extractJson(text));
       if (!parsed.success)
         return { ok: false, reason: `${this.name}: response did not match schema` };
       const allowed = new Set(allowedSkills.map((s) => s.toLowerCase()));

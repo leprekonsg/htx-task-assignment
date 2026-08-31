@@ -40,18 +40,57 @@ export function buildPrompt(
   ].join('\n');
 }
 
-/** Tolerates code fences or stray text around the JSON object. */
+/**
+ * Pulls the JSON object out of a model response. Gemini in JSON mode returns bare JSON, but Gemma
+ * ignores JSON mode (verified live, see README) and tends to wrap the object in prose and a ```json
+ * fence, sometimes echoing the requested shape first. Candidates are tried in order: the whole text,
+ * each fenced block (last first), the last `{"items": ...}` object, then first `{` … last `}`.
+ */
 export function extractJson(text: string): unknown {
-  const trimmed = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '');
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const start = trimmed.indexOf('{');
-    const end = trimmed.lastIndexOf('}');
-    if (start === -1 || end <= start) throw new Error('response contains no JSON object');
-    return JSON.parse(trimmed.slice(start, end + 1));
+  const trimmed = text.trim();
+  const candidates: string[] = [trimmed];
+
+  const fenced = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1]!.trim());
+  candidates.push(...fenced.reverse());
+
+  const itemsStarts = [...trimmed.matchAll(/\{\s*"items"\s*:/g)].map((m) => m.index);
+  const lastItems = itemsStarts.at(-1);
+  if (lastItems !== undefined) {
+    const balanced = sliceBalancedObject(trimmed, lastItems);
+    if (balanced !== undefined) candidates.push(balanced);
   }
+
+  const first = trimmed.indexOf('{');
+  const last = trimmed.lastIndexOf('}');
+  if (first !== -1 && last > first) candidates.push(trimmed.slice(first, last + 1));
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error('response contains no JSON object');
+}
+
+/** Returns the `{ ... }` starting at `start` with balanced braces (string-aware), or undefined. */
+function sliceBalancedObject(text: string, start: number): string | undefined {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
 }

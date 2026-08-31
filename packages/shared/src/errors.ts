@@ -12,6 +12,7 @@ export const ERROR_CODES = [
   'SUBTASKS_NOT_DONE',
   'ANCESTOR_IS_DONE',
   'PARENT_IS_DONE',
+  'NOT_FOUND',
   'INTERNAL_ERROR',
 ] as const;
 export const ErrorCodeSchema = z.enum(ERROR_CODES);
