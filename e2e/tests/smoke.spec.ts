@@ -46,6 +46,7 @@ test('seed data is present', async ({ request }) => {
 
 test('home page renders the task list shell and navigation', async ({ page }) => {
   await page.goto('/');
+  await expect(page.getByRole('link', { name: 'reX home' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Create task' })).toBeVisible();
   await page.getByRole('link', { name: 'Create task' }).click();

@@ -1,4 +1,4 @@
-# Task Assignment App
+# reX — Task Assignment App
 
 [![CI](https://github.com/leprekonsg/htx-task-assignment/actions/workflows/ci.yml/badge.svg)](https://github.com/leprekonsg/htx-task-assignment/actions/workflows/ci.yml)
 
@@ -258,6 +258,12 @@ with every design token declared in one `@theme` block, and native form controls
 [`docs/frontend-guide.md`](docs/frontend-guide.md), which walks through this codebase file by file.
 
 ### Design system
+
+The portal is named **reX** — a nod to Jira, whose own name came from *Gojira*. The lowercase `re` is live text in
+Work Sans 700; the uppercase `X` is a tapered custom X with restrained concave terminals, drawn as a single inline SVG
+path in [`Wordmark.tsx`](apps/web/src/components/Wordmark.tsx). Because it is drawn rather than shipped as an image, it
+takes its two colours straight from the ink and accent tokens below, sits on the same left edge as everything else, and
+stays crisp at any size.
 
 The interface is built like a two-colour printed sheet: one paper stock, two plates of ink. Taking that constraint
 literally is what keeps it disciplined, and it is enforced in exactly one place — the `@theme` block in

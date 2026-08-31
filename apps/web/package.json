@@ -31,5 +31,5 @@
     "jsdom": "30.0.1",
     "vitest": "4.1.11"
   },
-  "description": "React SPA for the Task Assignment App"
+  "description": "React SPA for the reX task-assignment portal"
 }
