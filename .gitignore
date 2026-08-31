@@ -21,3 +21,6 @@ coverage/
 # playwright
 e2e/playwright-report/
 e2e/test-results/
+
+# Impeccable design-tooling state (critique snapshots, detector cache) — not part of the submission
+.impeccable/

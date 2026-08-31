@@ -2,9 +2,18 @@
 // "1", "1.1", "1.1.1" (built by `flattenTaskTree`, a shared helper — see @htx/shared — so the
 // numbering logic isn't duplicated between here and any other place that might render a task tree).
 // This page fetches tasks and developers (`useTasks`/`useDevelopers`, both TanStack Query hooks) and
-// renders one of four things depending on their state: skeleton rows while loading, an error banner
-// with Retry if the fetch failed, an empty state if there are simply no tasks yet, or the table.
-// Per-row editing (status/assignee selects, their own PATCH) is delegated to `TaskRow`.
+// renders one of four things depending on the tasks query's state: skeleton rows while loading, an
+// error banner with Retry if the fetch failed, an empty state if there are simply no tasks yet, or
+// the table. Per-row editing (status/assignee selects, their own PATCH) is delegated to `TaskRow`.
+//
+// The developers query is handled separately, and deliberately does not gate the table: if
+// `GET /api/developers` fails, hiding the tasks the user can still read and re-status would make a
+// developers outage worse than it needs to be. What it *does* gate is assignment — if developers
+// can't be shown, the assignee dropdown has nothing trustworthy to offer, so a second, independent
+// `ErrorBanner` (with its own Retry) explains that, and `assignmentUnavailable` (true whenever the
+// developers query hasn't succeeded — still pending, or errored) is threaded down to every `TaskRow`
+// to disable just the assignee `<select>`. The status `<select>` is left alone, since it never reads
+// `developers` and has no reason to lock up because a different query failed.
 import { useState } from 'react';
 import { useLocation } from 'react-router';
 import { flattenTaskTree } from '@htx/shared';
@@ -25,6 +34,7 @@ export default function TaskListPage() {
 
   const rows = tasksQuery.data ? flattenTaskTree(tasksQuery.data) : [];
   const developers = developersQuery.data ?? [];
+  const assignmentUnavailable = developersQuery.isPending || developersQuery.isError;
 
   return (
     <div className="flex flex-col gap-4">
@@ -36,6 +46,13 @@ export default function TaskListPage() {
         <ErrorBanner
           message={tasksQuery.error.message || 'Failed to load tasks.'}
           onRetry={() => tasksQuery.refetch()}
+        />
+      )}
+
+      {developersQuery.isError && (
+        <ErrorBanner
+          message="Couldn't load developers, so tasks can't be assigned right now."
+          onRetry={() => developersQuery.refetch()}
         />
       )}
 
@@ -67,7 +84,14 @@ export default function TaskListPage() {
               {tasksQuery.isLoading ? (
                 <SkeletonRows />
               ) : (
-                rows.map((row) => <TaskRow key={row.task.id} row={row} developers={developers} />)
+                rows.map((row) => (
+                  <TaskRow
+                    key={row.task.id}
+                    row={row}
+                    developers={developers}
+                    assignmentUnavailable={assignmentUnavailable}
+                  />
+                ))
               )}
             </tbody>
           </table>

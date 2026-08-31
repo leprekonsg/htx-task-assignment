@@ -17,6 +17,9 @@ export default defineConfig({
   testDir: './tests',
   // Both default to the package.json directory (the repo root); keep everything Playwright writes under e2e/.
   outputDir: './test-results',
+  // Removes this suite's own fixture tasks (titles carry an `[e2e ` marker) after the run — see the
+  // header comment in global-teardown.ts for why the delete is scoped that way and why it never fails.
+  globalTeardown: './global-teardown.ts',
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false, // tests share one database; they use unique titles but run serially to keep logs readable

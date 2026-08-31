@@ -162,7 +162,9 @@ saving — automatically, on the backend, in the same request.
   (`responseMimeType` + `responseJsonSchema`). Gemma models accept those options but ignore them — verified live: they
   answer with prose and a fenced JSON block — so they are asked for JSON in the prompt and the JSON object is extracted
   from wherever it lands in the text. Output is validated with Zod; unknown skill names are dropped, one bad name never
-  discards the whole batch.
+  discards the whole batch — but an item whose names were *all* rejected is treated as unresolved rather than as "no
+  skills apply" (an empty answer the model gave on its own is still trusted): the item is dropped instead of recorded
+  as an empty, unrestricted result, and a response with no usable items falls through to the next model in the chain.
 - **Fail-open, honestly:** if every model fails, the task is still created with no skills and `skills_source =
   'unresolved'`, shown in the UI as "Not inferred". The heuristic alternative (keyword matching) was deliberately not
   built — it would have made the app look like Part 5 works when the LLM was not involved.
@@ -263,7 +265,14 @@ npm run test:e2e                  # 10 Playwright tests against the real Docker 
   `unresolved` path when it is not. `E2E_BASE_URL=http://localhost:8080 npm run test:e2e` reuses a stack that is
   already running; `npm run test:e2e:ui` opens Playwright's inspector. This layer earned its place on the first run:
   it caught the SDK turning the 5-second per-attempt timeout into a server deadline that the Gemini API rejects
-  (`400 Manually set deadline 5s is too short`), which no mocked test could see.
+  (`400 Manually set deadline 5s is too short`), which no mocked test could see. Every fixture task title carries a
+  `[e2e ...]` marker (`uniqueTitle` in `e2e/tests/helpers.ts`), and a `globalTeardown` (`e2e/global-teardown.ts`)
+  deletes exactly those rows — subtasks and skill links cascade — once the suite finishes, pass or fail. That matters
+  because, unlike CI (which throws its Postgres volume away every run), a local run against the Compose stack keeps
+  `pgdata` between runs, so without cleanup the demo task list would fill up with leftover fixtures. Teardown connects
+  with `pg` at `E2E_DATABASE_URL` (default `postgresql://taskapp:taskapp@localhost:5432/taskapp`, matching
+  `docker-compose.yml`'s published port); point it elsewhere if the stack under test isn't on localhost. It never
+  fails the run — a database it can't reach just logs a warning and the suite's own pass/fail stands.
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs format check, lint, typecheck and the unit/integration tests
 against a Postgres service container, builds both Docker images, and runs the Playwright suite against the composed
@@ -280,7 +289,7 @@ Runtime dependencies are kept to what the assignment needs; each one below is th
 | `@fastify/swagger`, `@fastify/swagger-ui` | api | Generates and serves the API documentation from those same schemas (`/docs`). |
 | `zod` | shared, api | Runtime validation shared by API, web form and LLM output parsing; also emits the JSON Schema sent to Gemini. |
 | `pino` | api | Fastify's own logger, declared explicitly because the server imports it directly for the classifier's startup/fallback log lines. No extra code is pulled in. |
-| `pg` | api | The standard Postgres driver. SQL is written by hand (recursive CTEs, `FOR UPDATE`), so an ORM would add a dependency without removing much code. |
+| `pg` | api, e2e | The standard Postgres driver. SQL is written by hand (recursive CTEs, `FOR UPDATE`), so an ORM would add a dependency without removing much code. Also used by `e2e/global-teardown.ts` to delete the suite's own fixture rows after a run — no new dependency, just root `devDependencies` pointing at the same version `apps/api` already pins. |
 | `@google/genai` | api | Google's current official Gemini SDK (the older `@google/generative-ai` is end-of-life). Provides structured output, per-attempt timeouts, opt-in retries and abort signals. |
 | `react`, `react-dom` | web | Required by the assignment. |
 | `react-router` | web | Two pages with real, bookmarkable URLs; declarative mode is a handful of imports. |

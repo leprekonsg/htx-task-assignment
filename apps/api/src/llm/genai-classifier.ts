@@ -1,6 +1,11 @@
 import { ApiError, ThinkingLevel, type GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
-import type { ClassificationItem, ClassificationResult, SkillClassifier } from './classifier.js';
+import type {
+  ClassificationItem,
+  ClassificationResult,
+  ClassifiedItem,
+  SkillClassifier,
+} from './classifier.js';
 import { buildPrompt, extractJson, responseSchema } from './prompt.js';
 
 export interface GenAiClassifierOptions {
@@ -31,6 +36,18 @@ const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
  * building the `responseJsonSchema` hint sent to the model, since applying it to the actual response
  * would reject an entire batch over one hallucinated or mis-cased skill name instead of just dropping
  * it. `skills` filtering against the allowed list (case-insensitively) happens below, after parsing.
+ *
+ * That leniency is per skill name, not per item. If an item's raw `skills` array came back non-empty
+ * but every name in it was rejected by the allow-list filter, the item is dropped from the result
+ * entirely rather than kept as `skills: []`. A raw empty array is a legitimate "no skill applies"
+ * answer (e.g. "Book the quarterly team lunch"); an array that went in non-empty and came out empty
+ * means every name the model gave was invalid, which is a wrong answer, not an empty one. The two are
+ * indistinguishable once stored as `skills: []` — and because a skill-less task can be picked up by
+ * any developer (Rule A), silently keeping the wrong answer would turn a hallucination into an
+ * unrestricted task. Dropping the item instead leaves it unresolved (`TasksService.resolveSkills`
+ * records refs missing from the result as `source: 'unresolved'`), and if the whole response turns out
+ * to contain no usable items this way, `parse` reports failure so `ChainClassifier` falls through to
+ * the next model instead of recording a fabricated success.
  */
 const RawResponseSchema = z.object({
   items: z.array(z.object({ ref: z.string(), skills: z.array(z.string()) })),
@@ -88,12 +105,16 @@ export class GenAiClassifier implements SkillClassifier {
         await sleep(this.backoffMs(attempt), signal);
         continue;
       }
-      return this.parse(text, allowedSkills);
+      return this.parse(text, items, allowedSkills);
     }
     return this.failure(lastError);
   }
 
-  private parse(text: string | undefined, allowedSkills: readonly string[]): ClassificationResult {
+  private parse(
+    text: string | undefined,
+    items: readonly ClassificationItem[],
+    allowedSkills: readonly string[],
+  ): ClassificationResult {
     if (!text) return { ok: false, reason: `${this.name}: empty response` };
     let json: unknown;
     try {
@@ -104,15 +125,28 @@ export class GenAiClassifier implements SkillClassifier {
     const parsed = RawResponseSchema.safeParse(json);
     if (!parsed.success)
       return { ok: false, reason: `${this.name}: response did not match schema` };
+
+    const requested = new Set(items.map((i) => i.ref));
     const allowed = new Set(allowedSkills.map((s) => s.toLowerCase()));
-    return {
-      ok: true,
-      model: this.name,
-      items: parsed.data.items.map((i) => ({
-        ref: i.ref,
-        skills: i.skills.filter((s) => allowed.has(s.toLowerCase())),
-      })),
-    };
+    const seen = new Set<string>();
+    const usable: ClassifiedItem[] = [];
+
+    for (const item of parsed.data.items) {
+      if (!requested.has(item.ref)) continue; // the model invented a ref we never asked about
+      if (seen.has(item.ref)) continue; // duplicate ref in the response — first occurrence wins
+      seen.add(item.ref);
+
+      const skills = item.skills.filter((s) => allowed.has(s.toLowerCase()));
+      // Raw `skills` was non-empty but nothing survived the filter: every name was invalid, so this
+      // is a hallucinated answer, not an empty one — drop the item rather than emit `skills: []`.
+      if (item.skills.length > 0 && skills.length === 0) continue;
+      usable.push({ ref: item.ref, skills });
+    }
+
+    if (usable.length === 0 && items.length > 0)
+      return { ok: false, reason: `${this.name}: response contained no usable items` };
+
+    return { ok: true, model: this.name, items: usable };
   }
 
   private failure(error: unknown): ClassificationResult {

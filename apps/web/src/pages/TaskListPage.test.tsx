@@ -72,13 +72,26 @@ function jsonResponse(status: number, body: unknown): Response {
   } as Response;
 }
 
-function makeFetchMock() {
+const developersError: ErrorResponse = {
+  error: { code: 'INTERNAL_ERROR', message: 'Failed to load developers.' },
+};
+
+/**
+ * `fetchState.developersOk` starts `true` and can be flipped by a test (e.g. to simulate a Retry
+ * that succeeds) — the mock reads it fresh on every call, so mutating the object after `renderPage`
+ * changes what the *next* `/api/developers` request returns.
+ */
+function makeFetchMock(fetchState: { developersOk: boolean } = { developersOk: true }) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
 
     if (method === 'GET' && url === '/api/tasks') return jsonResponse(200, rootTasks);
-    if (method === 'GET' && url === '/api/developers') return jsonResponse(200, developers);
+    if (method === 'GET' && url === '/api/developers') {
+      return fetchState.developersOk
+        ? jsonResponse(200, developers)
+        : jsonResponse(500, developersError);
+    }
 
     if (method === 'PATCH' && url === '/api/tasks/1') {
       const body = JSON.parse(String(init?.body)) as { status?: string };
@@ -182,5 +195,46 @@ describe('TaskListPage', () => {
     expect(alert).toHaveTextContent('Complete all subtasks before marking this task done.');
     // the select is enabled again once the failed request settles
     await waitFor(() => expect(statusSelect).not.toBeDisabled());
+  });
+
+  it('disables only the assignee select, and still renders the task list, when developers fails to load', async () => {
+    const fetchState = { developersOk: false };
+    globalThis.fetch = makeFetchMock(fetchState) as unknown as typeof fetch;
+    renderPage();
+
+    await screen.findByText('Build API');
+
+    expect(
+      screen.getByText("Couldn't load developers, so tasks can't be assigned right now."),
+    ).toBeInTheDocument();
+
+    const assigneeSelect = screen.getByRole('combobox', { name: 'Assignee of Build API' });
+    expect(assigneeSelect).toBeDisabled();
+
+    const statusSelect = screen.getByRole('combobox', { name: 'Status of Build API' });
+    expect(statusSelect).not.toBeDisabled();
+
+    // a developers outage must not hide tasks the user can still read and re-status
+    expect(screen.getByText('Write tests')).toBeInTheDocument();
+    expect(screen.getByText('Design login page')).toBeInTheDocument();
+  });
+
+  it('retries the developers query on Retry, re-enabling the assignee select', async () => {
+    const user = userEvent.setup();
+    const fetchState = { developersOk: false };
+    globalThis.fetch = makeFetchMock(fetchState) as unknown as typeof fetch;
+    renderPage();
+
+    await screen.findByText('Build API');
+    const assigneeSelect = screen.getByRole('combobox', { name: 'Assignee of Build API' });
+    expect(assigneeSelect).toBeDisabled();
+
+    fetchState.developersOk = true;
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(assigneeSelect).not.toBeDisabled());
+    expect(
+      screen.queryByText("Couldn't load developers, so tasks can't be assigned right now."),
+    ).not.toBeInTheDocument();
   });
 });

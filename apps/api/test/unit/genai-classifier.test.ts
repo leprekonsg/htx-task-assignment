@@ -97,6 +97,95 @@ describe('GenAiClassifier', () => {
     });
   });
 
+  it('keeps a partially-invalid item, dropping only the unknown name (one bad name never discards a good one)', async () => {
+    const generateContent = vi.fn().mockResolvedValue({
+      text: '{"items":[{"ref":"0","skills":["Frontend","DevOps"]}]}',
+    });
+    const classifier = new GenAiClassifier(stubAi(generateContent), baseOptions);
+
+    const result = await classifier.classify(oneItem, ['Frontend', 'Backend']);
+    expect(result).toEqual({
+      ok: true,
+      model: 'gemini-3.5-flash-lite',
+      items: [{ ref: '0', skills: ['Frontend'] }],
+    });
+  });
+
+  it('keeps a raw empty skills array as a legitimate "no skill applies" answer', async () => {
+    const generateContent = vi.fn().mockResolvedValue({
+      text: '{"items":[{"ref":"0","skills":[]}]}',
+    });
+    const classifier = new GenAiClassifier(stubAi(generateContent), baseOptions);
+
+    const result = await classifier.classify(oneItem, ['Frontend', 'Backend']);
+    expect(result).toEqual({
+      ok: true,
+      model: 'gemini-3.5-flash-lite',
+      items: [{ ref: '0', skills: [] }],
+    });
+  });
+
+  it('rejects a requested item whose skills are all unknown, without retrying (a parse failure is not retryable)', async () => {
+    const generateContent = vi.fn().mockResolvedValue({
+      text: '{"items":[{"ref":"0","skills":["DevOps"]}]}',
+    });
+    const classifier = new GenAiClassifier(stubAi(generateContent), {
+      ...baseOptions,
+      attempts: 3,
+    });
+
+    const result = await classifier.classify(oneItem, ['Frontend', 'Backend']);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('no usable items');
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops an all-unknown item but keeps a valid one from the same response', async () => {
+    const items = [
+      { ref: '0', title: 'a' },
+      { ref: '1', title: 'b' },
+    ];
+    const generateContent = vi.fn().mockResolvedValue({
+      text: '{"items":[{"ref":"0","skills":["Frontend"]},{"ref":"1","skills":["DevOps"]}]}',
+    });
+    const classifier = new GenAiClassifier(stubAi(generateContent), baseOptions);
+
+    const result = await classifier.classify(items, ['Frontend', 'Backend']);
+    expect(result).toEqual({
+      ok: true,
+      model: 'gemini-3.5-flash-lite',
+      items: [{ ref: '0', skills: ['Frontend'] }],
+    });
+  });
+
+  it('keeps only the first occurrence of a duplicated ref', async () => {
+    const generateContent = vi.fn().mockResolvedValue({
+      text: '{"items":[{"ref":"0","skills":["Frontend"]},{"ref":"0","skills":["Backend"]}]}',
+    });
+    const classifier = new GenAiClassifier(stubAi(generateContent), baseOptions);
+
+    const result = await classifier.classify(oneItem, ['Frontend', 'Backend']);
+    expect(result).toEqual({
+      ok: true,
+      model: 'gemini-3.5-flash-lite',
+      items: [{ ref: '0', skills: ['Frontend'] }],
+    });
+  });
+
+  it('ignores an item whose ref was never requested', async () => {
+    const generateContent = vi.fn().mockResolvedValue({
+      text: '{"items":[{"ref":"0","skills":["Frontend"]},{"ref":"zz","skills":["Backend"]}]}',
+    });
+    const classifier = new GenAiClassifier(stubAi(generateContent), baseOptions);
+
+    const result = await classifier.classify(oneItem, ['Frontend', 'Backend']);
+    expect(result).toEqual({
+      ok: true,
+      model: 'gemini-3.5-flash-lite',
+      items: [{ ref: '0', skills: ['Frontend'] }],
+    });
+  });
+
   it('returns ok: false (without retrying) when the response is not JSON', async () => {
     const generateContent = vi.fn().mockResolvedValue({ text: 'I cannot help with that.' });
     const classifier = new GenAiClassifier(stubAi(generateContent), {

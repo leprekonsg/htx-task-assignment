@@ -7,6 +7,13 @@
 // TanStack Query's cache invalidation (see api/hooks.ts) refetches the task list, so a successful
 // change shows the server's new value and a failed one snaps back to the server's old value — the
 // select never has to be told "undo yourself."
+//
+// `assignmentUnavailable` comes from TaskListPage's developers query, not from anything this row
+// knows about itself — it's true whenever the developer list couldn't be loaded (still pending, or
+// errored), which means `developers` may be incomplete or empty and the assignee dropdown has
+// nothing trustworthy to offer. It's combined with the mutation's own pending state and applied only
+// to the assignee `<select>`; the status `<select>` doesn't read `developers` at all, so it stays
+// usable even during a developers outage.
 import type { Developer, TaskListRow, TaskStatus } from '@htx/shared';
 import AssigneeSelect from './AssigneeSelect';
 import SkillBadges from './SkillBadges';
@@ -18,9 +25,10 @@ const INDENT_PER_DEPTH_PX = 20;
 interface TaskRowProps {
   row: TaskListRow;
   developers: readonly Developer[];
+  assignmentUnavailable: boolean;
 }
 
-export default function TaskRow({ row, developers }: TaskRowProps) {
+export default function TaskRow({ row, developers, assignmentUnavailable }: TaskRowProps) {
   const { task, number, depth } = row;
   const updateTask = useUpdateTask();
 
@@ -56,7 +64,7 @@ export default function TaskRow({ row, developers }: TaskRowProps) {
           <AssigneeSelect
             task={task}
             developers={developers}
-            disabled={updateTask.isPending}
+            disabled={updateTask.isPending || assignmentUnavailable}
             onChange={handleAssigneeChange}
           />
         </td>

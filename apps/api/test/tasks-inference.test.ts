@@ -115,6 +115,25 @@ describe('POST /api/tasks — inference', () => {
     expect(body.skillsSource).toBe('llm');
   });
 
+  it('leaves a node unresolved when the classifier response omits its ref', async () => {
+    // Mirrors what GenAiClassifier.parse now does when every skill name the model returned for a
+    // node was invalid: the item is dropped from the result rather than reported as skills: []. The
+    // node's ref is then simply absent from `items`, and TasksService.resolveSkills must treat that
+    // the same as any other missing ref — unresolved, not a confident "no skills needed".
+    classifier.resolveWith([], 'fake-model-x');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { title: 'something the model could not label' },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.skills).toEqual([]);
+    expect(body.skillsSource).toBe('unresolved');
+    expect(body.skillsModel).toBeNull();
+  });
+
   it('maps mixed-case skill names from the classifier', async () => {
     classifier.resolveWith([{ ref: '0', skills: ['frontend'] }]);
 

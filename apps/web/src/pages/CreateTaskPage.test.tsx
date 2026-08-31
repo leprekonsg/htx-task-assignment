@@ -7,7 +7,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Skill, Task } from '@htx/shared';
+import type { ErrorResponse, Skill, Task } from '@htx/shared';
 import CreateTaskPage from './CreateTaskPage';
 
 const skills: Skill[] = [
@@ -37,12 +37,22 @@ function jsonResponse(status: number, body: unknown): Response {
   } as Response;
 }
 
-function makeFetchMock() {
+const skillsError: ErrorResponse = {
+  error: { code: 'INTERNAL_ERROR', message: 'Failed to load skills.' },
+};
+
+/**
+ * `fetchState.skillsOk` starts `true`; a test can construct the mock with `{ skillsOk: false }` to
+ * simulate `GET /api/skills` failing, the same pattern TaskListPage.test.tsx uses for developers.
+ */
+function makeFetchMock(fetchState: { skillsOk: boolean } = { skillsOk: true }) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
 
-    if (method === 'GET' && url === '/api/skills') return jsonResponse(200, skills);
+    if (method === 'GET' && url === '/api/skills') {
+      return fetchState.skillsOk ? jsonResponse(200, skills) : jsonResponse(500, skillsError);
+    }
     if (method === 'POST' && url === '/api/tasks') return jsonResponse(201, createdTask);
 
     throw new Error(`Unhandled request: ${method} ${url}`);
@@ -132,5 +142,44 @@ describe('CreateTaskPage', () => {
 
     // One "Add subtask" button per node from depth 1-4; the depth-5 leaf has none.
     expect(screen.getAllByRole('button', { name: 'Add subtask' })).toHaveLength(4);
+  });
+
+  it('shows an error banner and blocks submit, with a visible reason, when skills fails to load', async () => {
+    const user = userEvent.setup();
+    const fetchState = { skillsOk: false };
+    globalThis.fetch = makeFetchMock(fetchState) as unknown as typeof fetch;
+    renderPage();
+
+    // Fill in the title so the only remaining reason submit is disabled is the skills failure.
+    await typeDeepestTitle(user, 'Something');
+
+    expect(
+      await screen.findByText("Couldn't load the skill list, so skills can't be chosen right now."),
+    ).toBeInTheDocument();
+
+    const submit = screen.getByRole('button', { name: 'Create task' });
+    expect(submit).toBeDisabled();
+    expect(
+      screen.getByText('Create task is unavailable until the skill list loads.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows nothing skills-related, and behaves as before, once skills loads successfully', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    // The transient "Loading skills…" status clears once the (successful) fetch resolves.
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+    expect(screen.queryByText(/Couldn't load the skill list/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Create task is unavailable until the skill list loads.'),
+    ).not.toBeInTheDocument();
+
+    const submit = screen.getByRole('button', { name: 'Create task' });
+    expect(submit).toBeDisabled(); // still disabled, but only because the title is empty
+
+    await typeDeepestTitle(user, 'Something');
+    expect(submit).not.toBeDisabled();
   });
 });
