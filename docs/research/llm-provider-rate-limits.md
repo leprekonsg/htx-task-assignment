@@ -255,3 +255,24 @@ The "retries by default" claim in the TL;DR and §5 is **wrong for `@google/gena
 - Whole-call cancellation is via `GenerateContentConfig.abortSignal?: AbortSignal` (`package/dist/node/node.d.ts`, interface `GenerateContentConfig`, alongside `httpOptions`, `responseMimeType`, `responseSchema`, `responseJsonSchema`, `temperature`, `systemInstruction`, `thinkingConfig`). `HttpOptions` itself has no signal field — the reviewer's observation was correct.
 
 Consequence for the plan: pass `httpOptions: { timeout, retryOptions: { attempts, initialDelay, maxDelay } }` explicitly and `config.abortSignal = AbortSignal.timeout(totalBudgetMs)`.
+
+## Errata 2 (2026-08-31, found by the Playwright e2e run against the live API)
+
+- `httpOptions.timeout` is **also sent to the server** as an `X-Server-Timeout` header (seconds), and the API rejects
+  values under 10 s: `400 INVALID_ARGUMENT — "Manually set deadline 5s is too short. Minimum allowed deadline is 10s."`
+  Every model in the chain failed the same way, so the task was created as `unresolved`.
+- Consequence for the implementation: the classifier no longer uses `httpOptions.timeout` or the SDK's `retryOptions`.
+  It runs its own attempt loop, each attempt bounded client-side by `AbortSignal.timeout(LLM_ATTEMPT_TIMEOUT_MS)`
+  combined (`AbortSignal.any`) with the chain's whole-budget signal, retrying only on 408/429/5xx, network errors and
+  attempt timeouts with 1 s → 2 s jittered backoff. The earlier "Consequence for the plan" line above is superseded.
+- Also observed live: Gemma models (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) return HTTP 200 when `responseMimeType`
+  is set but ignore it, answering with prose around a fenced JSON block — hence prompt-only JSON plus lenient extraction.
+- **Gemma 4 thinks by default.** Through the SDK the answer arrives as two parts, one flagged `thought: true`
+  (`usageMetadata.thoughtsTokenCount ≈ 230–275` for a two-title prompt) and `response.text` is the clean JSON, but the
+  request takes 6.6–9.7 s. Controls tried live on `gemma-4-31b-it`: `thinkingConfig.thinkingBudget: 0` → 400 "Thinking
+  budget is not supported for this model"; `thinkingLevel: 'low'` → 400 "Thinking level is not supported";
+  `includeThoughts: false` and a "do not reason" system instruction → no effect; `maxOutputTokens: 200` → truncated inside
+  the thoughts, no answer at all. **`thinkingLevel: 'minimal'` works**: 0 thought tokens, 2.7–5.1 s (`gemma-4-31b-it`),
+  4.8 s (`gemma-4-26b-a4b-it`), and `gemini-3.5-flash-lite` accepts it too (0.9 s vs 1.5 s). Adopted for every model;
+  the per-attempt timeout default moved from 5 s to 8 s accordingly.
+
