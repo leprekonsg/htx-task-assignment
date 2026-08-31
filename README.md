@@ -174,7 +174,8 @@ developers ──< developer_skills >── skills ──< task_skills >── t
 
 - `status` is a Postgres enum `task_status ('todo', 'in_progress', 'done')`.
 - Subtasks are ordinary rows in `tasks` with `parent_task_id` set (Part 4 — "same properties as tasks"). The tree is
-  unbounded in SQL and bounded to 5 levels by the API. Deleting a task cascades to its subtasks.
+  unbounded in SQL and bounded to 5 levels by the API. The `parent_task_id` foreign key uses
+  `ON DELETE CASCADE`, so deleting a task row directly also deletes its subtasks.
 - `skills_source` records how the task's skills were determined — `user`, `llm` or `unresolved` — and `skills_model`
   which model answered. This is what lets the UI and the API be honest about when the LLM was actually used.
 - Migrations are plain SQL in `apps/api/migrations/` (`0001_init`, `0002_subtasks`, `0003_skill_inference`), applied by a
@@ -194,12 +195,13 @@ transitions are rejected: reopening a task while an ancestor is `done` (`409 ANC
 a `done` ancestor (`409 PARENT_IS_DONE`).
 
 **Why Rule B needs a lock, not just a check.** The rule spans rows, so two concurrent requests can each pass their own
-check against the other's uncommitted state — *parent → done* and *child → todo* could both commit and leave a done parent
-with a todo child. Every mutation that can affect a tree's invariant therefore first takes a row lock on the **root of the
-tree** (`SELECT … FOR UPDATE` after walking up with a recursive common table expression (CTE)), then re-reads the statuses it depends on and checks
-them under the lock. Under READ COMMITTED the second transaction sees the first one's committed writes once it acquires
-the lock, so the race is closed with one lock per tree and no retry logic. An integration test fires the two conflicting
-updates together for 25 rounds and asserts the invariant after each.
+check against the other's uncommitted state — *parent → done* and *child → todo* could both commit and leave a done
+parent with a todo child. Every mutation that can affect a tree's invariant therefore first takes a row lock on the
+**root of the tree** (`SELECT … FOR UPDATE` after walking up with a recursive common table expression (CTE)), then
+re-reads the statuses it depends on and checks them under the lock. Under READ COMMITTED the second transaction sees
+the first one's committed writes once it acquires the lock, so the race is closed with one lock per tree and no retry
+logic. An integration test fires the two conflicting updates together for 25 rounds and asserts the invariant after
+each.
 
 **Atomic nested create.** `POST /api/tasks` accepts a whole tree and inserts it depth-first in one transaction; any
 invalid node (unknown skill id, depth > 5) rolls back everything.
@@ -279,26 +281,26 @@ createdAt, updatedAt, subtasks: Task[] }`.
 Two pages, matching the assignment's wireframes:
 
 - **Task List (`/`)** — one table for all tasks; subtasks are indented under their parent with hierarchical numbering
-  (1, 1.1, 1.1.1) set in monospace so `1.1.1` lines up under `1.1`. A census beside the heading (*7 tasks · 2 done ·
-  1 unassigned*) gives the shape of the list before a single row is read. Any task with subtasks can be folded shut
-  from the gutter — the folded row says what it is standing in for (*3 subtasks hidden*, counting the whole subtree),
+  (1, 1.1, 1.1.1) set in monospace so `1.1.1` lines up under `1.1`. A census beside the heading (*7 tasks · 2 done · 1
+  unassigned*) gives the shape of the list before a single row is read. Any task with subtasks can be folded shut from
+  the gutter — the folded row says what it is standing in for (*3 subtasks hidden*, counting the whole subtree),
   numbering and the census are unchanged by folding, and *Expand all* / *Collapse all* appear only when the list
   actually has a branch in it. Each row also offers *Add subtask*, which opens a one-node composer under that row and
-  posts it with the parent's id — the API has always accepted `parentId`, so this is the UI catching up with it, not a
-  new capability. (Part 4.3's nested creation lives on the Create Task page and is unchanged.) A Done parent says why
-  it can't take one instead of letting you write a subtask the server would refuse, and no row five levels deep offers
-  the action at all. Status and assignee are inline `<select>`s
-  that save immediately; the assignee list disables ineligible developers and says which skill they lack; a parent that
-  still has unfinished subtasks says so under its status control (*0/2 subtasks done*) **before** you try, while
-  leaving Done selectable so the server stays the one that enforces Rule B; a rejected change (409) shows the server's
-  message in the row and the row snaps back to the saved state. Skills inferred by the LLM carry an "AI-inferred" tag;
-  tasks whose skills could not be inferred say so.
+  posts it with the parent's id — the API already accepts `parentId`, so this extends the existing write path into the
+  UI rather than adding a capability. (Part 4.3's nested creation lives on the Create Task page and is unchanged.) A
+  Done parent says why it can't take one instead of letting you write a subtask the server would refuse, and no row
+  five levels deep offers the action at all. Status and assignee are inline `<select>`s that save immediately; the
+  assignee list disables ineligible developers and says which skill they lack; a parent that still has unfinished
+  subtasks says so under its status control (*0/2 subtasks done*) **before** you try, while leaving Done selectable so
+  the server stays the one that enforces Rule B; a rejected change (409) shows the server's message in the row and the
+  row snaps back to the saved state. Skills inferred by the LLM carry an "AI-inferred" tag; tasks whose skills could
+  not be inferred say so.
 - **Create Task (`/tasks/new`)** — a title, optional skills, and nested subtasks to any shape up to depth 5, submitted as
   one tree; the details are in the next section. There is no assignee field — assignment happens on the list.
 
 ![The Task List: a folded subtree, hierarchical numbering, inline status and assignee, AI-inferred tag](docs/images/task-list.png)
 
-*The demo state (`db:demo`), so this is reproducible. Task 4 is folded — its row says what it is standing in for, and 5 keeps the number it always had. Task 1 is pointed at, so its Add subtask action is showing. 1.3 had no skills and no model available, so it says so rather than pretending to none.*
+*The demo state (`db:demo`), so this is reproducible. Task 4 is folded — its row says what it is standing in for, and 5 keeps the number it always had. Task 1 is pointed at, so its Add subtask action is showing. 1.3 had no skills and no model available, so it says so rather than pretending that no skills apply.*
 
 ![The Add subtask composer, open under an existing task](docs/images/add-subtask.png)
 
@@ -344,8 +346,8 @@ Behaviour worth knowing when you try it:
 The portal is named **reX** — a nod to Jira, whose own name came from *Gojira*. The lowercase `re` is live text in
 Work Sans 700; the uppercase `X` is a tapered custom X with restrained concave terminals, drawn as a single inline SVG
 path in [`Wordmark.tsx`](apps/web/src/components/Wordmark.tsx). Because it is drawn rather than shipped as an image, it
-takes its two colours straight from the ink and accent tokens in the following table, sits on the same left edge as everything else, and
-stays crisp at any size.
+takes its two colours straight from the ink and accent tokens in the following table, sits on the same left edge as
+everything else, and stays crisp at any size.
 
 The interface is built like a two-colour printed sheet: one paper stock, two plates of ink. Taking that constraint
 literally is what keeps it disciplined, and it is enforced in exactly one place — the `@theme` block in
@@ -453,8 +455,9 @@ Runtime dependencies are kept to what the assignment needs; the following table 
 | `@tanstack/react-query` | web | Server-state cache with loading/error states and invalidation after mutations — removes hand-written `useEffect` fetching and stale-data bugs. |
 | `tailwindcss`, `@tailwindcss/vite` | web (build) | Utility CSS with the design tokens declared in CSS (`@theme`); zero config. A component library (shadcn) was considered and rejected: ~6 extra packages plus vendored component code for two pages, and it replaces the native `<select>` the wireframe uses. |
 
-Every package in the preceding table was vetted before it was picked: current release, maintenance, licence, OSV/GHSA advisories, and a
-name-by-name check against the 2025–26 npm supply-chain incidents, plus the case for Fastify over Express and NestJS.
+Every package in the preceding table was vetted before it was picked: current release, maintenance, licence, OSV/GHSA
+advisories, and a name-by-name check against the 2025–26 npm supply-chain incidents, plus the case for Fastify over
+Express and NestJS.
 One section per dependency, in [`docs/research/`](docs/research/).
 
 Development-only: `typescript`, `vite`, `@vitejs/plugin-react`, `tsx` (run TS in dev), `vitest` + `@testing-library/*` +
@@ -467,8 +470,9 @@ logs), `@types/*`. Every version is pinned exactly and installed from the commit
 1. **Eligibility** means the developer holds every skill the task requires; a task with no skills is assignable to anyone.
 2. **Skills are fixed at creation.** Updates are limited to `status` and `assignee` (Part 2's list); a task's skills can be
    chosen by the user or inferred, not edited afterwards.
-3. **Statuses** are `todo`, `in_progress`, `done` (the spec says "To-do / Done / etc."). Transitions are free except the
-   preceding Rule B constraints; reopening a *parent* is allowed, reopening a child under a done parent is not.
+3. **Statuses** are `todo`, `in_progress`, `done` (the spec says "To-do / Done / etc."). Transitions are free except
+   for the Rule B constraints described in [Business rules](#business-rules); reopening a *parent* is allowed,
+   reopening a child under a done parent is not.
 4. **Unassigning** (`assigneeId: null`) is allowed.
 5. A subtask tree is created **atomically** in one request; depth ≤ 5, title 1–500 characters, ≤ 50 subtasks per node.
 6. **Subtask eligibility** is computed from the subtask's own skills, not its ancestors'.
