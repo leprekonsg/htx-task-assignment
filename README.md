@@ -19,7 +19,7 @@ Fastify 5 · React 19 (Vite) · Gemini API · Docker Compose**.
 - [Frontend](#frontend)
   - [Create Task form (Part 4.3)](#create-task-form-part-43)
   - [Design system](#design-system)
-- [Testing](#testing)
+- [Tests](#tests)
 - [Dependencies and why](#dependencies-and-why)
 - [Assumptions](#assumptions)
 - [Known limitations and future work](#known-limitations-and-future-work)
@@ -60,7 +60,7 @@ Compose starts four services in order: `db` (Postgres) → `migrate` (one-shot: 
 → `api` → `web` (nginx serving the built SPA and proxying `/api` and `/docs`). The database is seeded with the four
 developers from the assignment: Alice (Frontend), Bob (Backend), Carol (Frontend + Backend), Dave (Backend).
 
-Without a `GEMINI_API_KEY` everything still works; tasks created without skills are simply stored as *not inferred*
+Without a `GEMINI_API_KEY` everything still works; tasks created without skills are stored as *not inferred*
 (see [Skill inference](#skill-inference-part-5)). To start from an empty database again: `docker compose down -v`.
 
 ### Two states you can load
@@ -69,7 +69,7 @@ A fresh stack starts with no tasks, which is the right first impression but a po
 fills it with a tree per thing the Task List has to render, and another empties it again:
 
 ```bash
-docker compose run --rm api node dist/db/cli.js demo    # 16 tasks: the state described below
+docker compose run --rm api node dist/db/cli.js demo    # 16 tasks: the demo state
 docker compose run --rm api node dist/db/cli.js empty   # back to no tasks
 ```
 
@@ -91,7 +91,7 @@ The demo state is a checklist of the UI rather than a plausible backlog. It has 
 folding, a five-level chain (the API's limit, where **Add subtask** is no longer offered), a Done parent whose whole
 subtree is Done (where **Add subtask** is disabled and says why), a leaf with nothing under it, all three
 `skills_source` values — chosen, AI-inferred, not inferred — assigned and unassigned rows, and a task needing both
-skills, which only Carol can hold. `apps/api/test/demo.test.ts` loads it and checks it against Rule A, Rule B and the
+skills, which only Carol can hold. `apps/api/test/demo.test.ts` loads it and checks it against Rule A, Rule B, and the
 depth limit, so the fixture cannot drift into a state the API itself would have refused, then loads it a second time
 and compares the whole API response to the first.
 
@@ -114,7 +114,7 @@ Other scripts (all from the repo root): `npm run typecheck` · `npm run lint` ·
 ## Configuration
 
 All configuration is by environment variable (`.env` is read by Compose and by the dev scripts). `.env.example`
-carries the keys you would normally set; every key the API itself reads is declared in
+carries the keys you normally set; every key the API itself reads is declared in
 [`apps/api/src/config.ts`](apps/api/src/config.ts), which validates them at startup with Zod and refuses to start on a
 bad value.
 
@@ -134,7 +134,7 @@ bad value.
 
 ## System design
 
-Every choice below had alternatives. The ones weighed and rejected, and why, are in [`docs/PLAN.md`](docs/PLAN.md).
+Every choice in this section had alternatives. The ones weighed and rejected, and why, are in [`docs/PLAN.md`](docs/PLAN.md).
 
 ### Architecture
 
@@ -161,7 +161,7 @@ apps/web          React SPA: two pages, TanStack Query for server state, a reduc
 
 Inside the API the layering is deliberately shallow: `routes/*` declare schemas and call the service; `modules/tasks/
 tasks.service.ts` holds every business rule and owns transactions; `modules/tasks/tasks.sql.ts` holds every SQL
-statement (so the schema's use can be reviewed in one file); `llm/*` is the only code that knows about Gemini.
+statement (so the schema's use can be reviewed in one file); `llm/*` is the only code that calls Gemini.
 
 ### Data model
 
@@ -174,7 +174,7 @@ developers ──< developer_skills >── skills ──< task_skills >── t
 
 - `status` is a Postgres enum `task_status ('todo', 'in_progress', 'done')`.
 - Subtasks are ordinary rows in `tasks` with `parent_task_id` set (Part 4 — "same properties as tasks"). The tree is
-  unbounded in SQL and bounded to 5 levels by the API. Deleting a task would cascade to its subtasks.
+  unbounded in SQL and bounded to 5 levels by the API. Deleting a task cascades to its subtasks.
 - `skills_source` records how the task's skills were determined — `user`, `llm` or `unresolved` — and `skills_model`
   which model answered. This is what lets the UI and the API be honest about when the LLM was actually used.
 - Migrations are plain SQL in `apps/api/migrations/` (`0001_init`, `0002_subtasks`, `0003_skill_inference`), applied by a
@@ -196,7 +196,7 @@ a `done` ancestor (`409 PARENT_IS_DONE`).
 **Why Rule B needs a lock, not just a check.** The rule spans rows, so two concurrent requests can each pass their own
 check against the other's uncommitted state — *parent → done* and *child → todo* could both commit and leave a done parent
 with a todo child. Every mutation that can affect a tree's invariant therefore first takes a row lock on the **root of the
-tree** (`SELECT … FOR UPDATE` after walking up with a recursive CTE), then re-reads the statuses it depends on and checks
+tree** (`SELECT … FOR UPDATE` after walking up with a recursive common table expression (CTE)), then re-reads the statuses it depends on and checks
 them under the lock. Under READ COMMITTED the second transaction sees the first one's committed writes once it acquires
 the lock, so the race is closed with one lock per tree and no retry logic. An integration test fires the two conflicting
 updates together for 25 rounds and asserts the invariant after each.
@@ -344,7 +344,7 @@ Behaviour worth knowing when you try it:
 The portal is named **reX** — a nod to Jira, whose own name came from *Gojira*. The lowercase `re` is live text in
 Work Sans 700; the uppercase `X` is a tapered custom X with restrained concave terminals, drawn as a single inline SVG
 path in [`Wordmark.tsx`](apps/web/src/components/Wordmark.tsx). Because it is drawn rather than shipped as an image, it
-takes its two colours straight from the ink and accent tokens below, sits on the same left edge as everything else, and
+takes its two colours straight from the ink and accent tokens in the following table, sits on the same left edge as everything else, and
 stays crisp at any size.
 
 The interface is built like a two-colour printed sheet: one paper stock, two plates of ink. Taking that constraint
@@ -369,7 +369,7 @@ reads as an outline instead of a stack of strings. The shared class strings for 
 
 The palette and typeface are taken from [htx.gov.sg](https://www.htx.gov.sg/who-we-are/our-purpose) — the violet, the
 violet-cast black and Work Sans are read from that site's own stylesheet. Only the visual language is borrowed: no HTX
-name, logo or mark appears anywhere in the UI, because this app is not an HTX product and should not imply that it is.
+name, logo, or mark appears anywhere in the UI, because this app is not an HTX product and should not imply that it is.
 
 Work Sans is **self-hosted** — one 50 KB variable file covering weights 400–700 in
 [`apps/web/public/fonts/`](apps/web/public/fonts/), under the [SIL Open Font
@@ -380,7 +380,7 @@ Contrast was measured in the rendered page rather than assumed: body text 6.7:1 
 violet 9.3:1 (white on violet 11.3:1), and every control border and nesting rail at 3.6:1 or better. The previous
 control borders were ~1.3:1 and failed WCAG 1.4.11.
 
-## Testing
+## Tests
 
 Four layers, 206 tests in total; every layer runs in CI.
 
@@ -399,9 +399,9 @@ npm run test:e2e                      # 13 Playwright tests against the real Doc
   cases; the Rule B **concurrency race** (25 rounds, invariant asserted after each); inference with a fake classifier
   (LLM result, failure ⇒ `unresolved`, a genuinely empty result kept, unknown skill names filtered and an all-unknown
   item treated as unresolved, one batched call per request); the
-  classifier chain, prompt and JSON extraction (including Gemma-style prose around the JSON); config parsing;
+  classifier chain, prompt, and JSON extraction (including Gemma-style prose around the JSON); config parsing;
   `/docs/json` validity; the local-only guard in front of the destructive database commands; and the demo fixture,
-  loaded and then checked against Rule A, Rule B and the depth limit — and reloaded, to prove the second load returns
+  loaded and then checked against Rule A, Rule B, and the depth limit — and reloaded, to prove the second load returns
   the identical tree.
 - **web** — form reducer (paths, structural sharing, depth cap, payload shape, numbering, node counts, first
   missing title); Task List rendering (numbering, badges, disabled ineligible developers, PATCH on change, 409 message,
@@ -431,13 +431,13 @@ npm run test:e2e                      # 13 Playwright tests against the real Doc
   `docker-compose.yml`'s published port); point it elsewhere if the stack under test isn't on localhost. It never
   fails the run — a database it can't reach just logs a warning and the suite's own pass/fail stands.
 
-CI (GitHub Actions, `.github/workflows/ci.yml`) runs format check, lint, typecheck and the unit/integration tests
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs format check, lint, typecheck, and the unit/integration tests
 against a Postgres service container, builds both Docker images, and runs the Playwright suite against the composed
 stack (without an API key, so the inference test exercises the `unresolved` path there).
 
 ## Dependencies and why
 
-Runtime dependencies are kept to what the assignment needs; each one below is the whole list.
+Runtime dependencies are kept to what the assignment needs; the following table is the whole list.
 
 | Package | Where | Why this, and not something else |
 |---|---|---|
@@ -453,7 +453,7 @@ Runtime dependencies are kept to what the assignment needs; each one below is th
 | `@tanstack/react-query` | web | Server-state cache with loading/error states and invalidation after mutations — removes hand-written `useEffect` fetching and stale-data bugs. |
 | `tailwindcss`, `@tailwindcss/vite` | web (build) | Utility CSS with the design tokens declared in CSS (`@theme`); zero config. A component library (shadcn) was considered and rejected: ~6 extra packages plus vendored component code for two pages, and it replaces the native `<select>` the wireframe uses. |
 
-Every package above was vetted before it was picked: current release, maintenance, licence, OSV/GHSA advisories and a
+Every package in the preceding table was vetted before it was picked: current release, maintenance, licence, OSV/GHSA advisories, and a
 name-by-name check against the 2025–26 npm supply-chain incidents, plus the case for Fastify over Express and NestJS.
 One section per dependency, in [`docs/research/`](docs/research/).
 
@@ -468,12 +468,12 @@ logs), `@types/*`. Every version is pinned exactly and installed from the commit
 2. **Skills are fixed at creation.** Updates are limited to `status` and `assignee` (Part 2's list); a task's skills can be
    chosen by the user or inferred, not edited afterwards.
 3. **Statuses** are `todo`, `in_progress`, `done` (the spec says "To-do / Done / etc."). Transitions are free except the
-   Rule B constraints above; reopening a *parent* is allowed, reopening a child under a done parent is not.
+   preceding Rule B constraints; reopening a *parent* is allowed, reopening a child under a done parent is not.
 4. **Unassigning** (`assigneeId: null`) is allowed.
 5. A subtask tree is created **atomically** in one request; depth ≤ 5, title 1–500 characters, ≤ 50 subtasks per node.
 6. **Subtask eligibility** is computed from the subtask's own skills, not its ancestors'.
 7. The **skills catalogue** is exactly the two skills in the assignment (Frontend, Backend); it is a table, so it can grow.
-8. **No** authentication, deletion or multi-tenancy — none is asked for.
+8. **No** authentication, deletion, or multi-tenancy — none is asked for.
 9. When a task is created **without skills the LLM is consulted**; `skillIds: []` counts as "no skills provided".
 
 ## Known limitations and future work
@@ -482,7 +482,7 @@ logs), `@types/*`. Every version is pinned exactly and installed from the commit
 - No task deletion, list filtering/search, or optimistic UI updates.
 - Folding is a per-session reading choice held in component state: it is not persisted across a reload, and a task added
   from the list is placed by the server's ordering (last among its siblings), not inserted client-side.
-- An unsaved **Add subtask** draft survives switching rows, folding and Collapse all, but it lives in component state:
+- An unsaved **Add subtask** draft survives switching rows, folding, and Collapse all, but it lives in component state:
   a reload discards it. Only one composer is open at a time, so subtasks are added one at a time rather than in a run.
 - Removing a subtask in the create form asks for confirmation rather than offering undo.
 - Tailwind v4 targets modern browsers (Safari 16.4+, Chrome 111+, Firefox 128+).
