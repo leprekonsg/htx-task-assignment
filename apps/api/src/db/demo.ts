@@ -19,6 +19,9 @@
  * everything to-do and then walking it bottom-up. Inserting the rows keeps the fixture readable and
  * free of network dependence; `test/demo.test.ts` then checks the result is a state the API's own
  * rules would have permitted, which is the part that actually matters.
+ *
+ * Timestamps are pinned too (see `demoTimestamp`), so "the same state every time" means the whole
+ * API response and not merely its ids.
  */
 import type { SkillsSource, TaskStatus } from '@htx/shared';
 import type { Pool, Queryable } from './pool.js';
@@ -41,6 +44,20 @@ export interface DemoLoadResult {
   /** Tasks that were in the database before this ran. */
   removed: number;
   created: number;
+}
+
+/**
+ * Fixture rows carry written-down timestamps rather than `now()`. Two reasons: a reload should
+ * reproduce the same API response byte for byte — ids alone don't do that, because `created_at` and
+ * `updated_at` are part of every task the API returns — and rows dated the moment you ran the
+ * command read as a database that was born three seconds ago. One minute apart in fixture order,
+ * which is also id order, so the demo has a plausible past and a diffable present.
+ */
+const DEMO_EPOCH_MS = Date.UTC(2026, 0, 5, 9, 0, 0);
+
+/** The instant the `index`-th task of the fixture (0-based, fixture order) was "created". */
+export function demoTimestamp(index: number): Date {
+  return new Date(DEMO_EPOCH_MS + index * 60_000);
 }
 
 /**
@@ -203,12 +220,17 @@ async function insertTasks(
   parentId: number | null,
   skillIds: Map<string, number>,
   developerIds: Map<string, number>,
+  /** How many tasks were inserted before this call — the fixture index of the next row. */
+  startIndex: number,
 ): Promise<number> {
   let created = 0;
   for (const task of tasks) {
+    // Never edited since, so updated_at is created_at. Both are written rather than defaulted.
+    const stamp = demoTimestamp(startIndex + created);
     const { rows } = await db.query<{ id: number }>(
-      `INSERT INTO tasks (title, status, assignee_id, parent_task_id, skills_source, skills_model)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO tasks (title, status, assignee_id, parent_task_id, skills_source, skills_model,
+                          created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
        RETURNING id`,
       [
         task.title,
@@ -217,6 +239,7 @@ async function insertTasks(
         parentId,
         task.skillsSource ?? 'user',
         task.skillsModel ?? null,
+        stamp,
       ],
     );
     const id = rows[0]!.id;
@@ -229,7 +252,14 @@ async function insertTasks(
       ]);
     }
 
-    created += await insertTasks(db, task.subtasks ?? [], id, skillIds, developerIds);
+    created += await insertTasks(
+      db,
+      task.subtasks ?? [],
+      id,
+      skillIds,
+      developerIds,
+      startIndex + created,
+    );
   }
   return created;
 }
@@ -250,7 +280,7 @@ export async function loadDemoState(pool: Pool): Promise<DemoLoadResult> {
     await truncateTasks(client);
     const skillIds = await nameToId(client, 'SELECT id, name FROM skills', 'skills');
     const developerIds = await nameToId(client, 'SELECT id, name FROM developers', 'developers');
-    const created = await insertTasks(client, DEMO_TASKS, null, skillIds, developerIds);
+    const created = await insertTasks(client, DEMO_TASKS, null, skillIds, developerIds, 0);
     return { removed, created };
   });
 }

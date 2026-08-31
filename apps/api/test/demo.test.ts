@@ -9,7 +9,13 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Developer, Task } from '@htx/shared';
 import { MAX_TASK_DEPTH, canAssign } from '@htx/shared';
-import { DEMO_TASKS, countDemoTasks, loadDemoState, loadEmptyState } from '../src/db/demo.js';
+import {
+  DEMO_TASKS,
+  countDemoTasks,
+  demoTimestamp,
+  loadDemoState,
+  loadEmptyState,
+} from '../src/db/demo.js';
 import { buildTestApp } from './helpers/app.js';
 import { getTestPool, resetDatabase, truncateTasks } from './helpers/db.js';
 
@@ -112,14 +118,25 @@ describe('demo data', () => {
     expect(doneParent).toBeDefined();
   });
 
-  it('is the same state every time it is loaded', async () => {
-    const first = walk(await loadAndRead()).map(({ task }) => [task.id, task.title]);
+  it('stamps the fixture rows with written-down times rather than the clock', async () => {
+    const rows = walk(await loadAndRead());
+
+    // Pre-order insertion into a restarted identity sequence, so the id is the fixture index + 1.
+    for (const { task } of rows) {
+      const expected = demoTimestamp(task.id - 1).toISOString();
+      expect(task.createdAt, `created_at of "${task.title}"`).toBe(expected);
+      expect(task.updatedAt, `updated_at of "${task.title}"`).toBe(expected);
+    }
+  });
+
+  it('is the same state every time it is loaded, down to the whole API response', async () => {
+    // The comparison is the entire tree — statuses, assignees, skills, sources, models and
+    // timestamps included — because ids alone would still pass if any of the rest drifted.
+    const first = await loadAndRead();
     const { removed } = await loadDemoState(getTestPool());
     expect(removed).toBe(countDemoTasks());
 
-    const second = walk(
-      (await app.inject({ method: 'GET', url: '/api/tasks' })).json() as Task[],
-    ).map(({ task }) => [task.id, task.title]);
+    const second = (await app.inject({ method: 'GET', url: '/api/tasks' })).json() as Task[];
     expect(second).toEqual(first);
   });
 
