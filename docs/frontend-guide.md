@@ -38,8 +38,10 @@ Read these in order; each paragraph is one file.
    Everything below assumes those two are in place.
 2. **`src/App.tsx`** — `AppShell` (header + nav) and `<Routes>`, which maps a URL to a page
    component: `/` → `TaskListPage`, `/tasks/new` → `CreateTaskPage`, anything else → `NotFoundPage`.
-3. **`src/index.css`** — Tailwind setup and the design tokens (`@theme` block). Skim it once so the
-   class names you see everywhere else (`bg-accent`, `text-text-muted`) make sense; see §5.
+3. **`src/index.css`** — Tailwind setup and the design tokens (`@theme` block), with
+   `src/components/typeStyles.ts` and `buttonStyles.ts` beside it holding the shared type and button
+   class strings. Skim them once so the class names you see everywhere else (`bg-accent`,
+   `text-text-muted`, `microLabelClass`) make sense; see §6.
 4. **`src/api/client.ts`** — `apiGet`/`apiPost`/`apiPatch`, the only functions that call `fetch`
    directly, plus `ApiError`, which turns the server's `{ error: { code, message } }` envelope into
    a real JS exception with a `.message` you can show to a user.
@@ -100,7 +102,7 @@ the font stack as CSS variables (`--color-accent`, `--radius-md`, ...); Tailwind
 matching utility classes (`bg-accent`, `rounded-md`). Every component in this app uses only those
 generated utilities — never a raw Tailwind palette class like `bg-blue-500` and never an inline hex
 colour — so the entire app's palette lives in one file, and changing a token there changes every
-component that uses it.
+component that uses it. §6 covers what this app's particular tokens mean and why there are so few.
 
 ## 4. How a status change travels
 
@@ -163,7 +165,61 @@ the UI for this data" — it's an imperative act on a real DOM element:
   disappears). Removing a subtask that has children first asks with `window.confirm` — the only
   place the app uses a browser dialog.
 
-## 6. Running and testing
+## 6. The design system: two inks on paper
+
+Every colour, size and radius in this app is declared once, in the `@theme` block of `index.css`, and
+no component is allowed to invent one. That single rule is most of what "a design system" means in
+practice, and it is worth a section because it is the frontend equivalent of refusing to scatter
+magic numbers through a service layer: when the palette lives in one file, changing it is an edit,
+not an audit.
+
+What makes this particular system easy to hold in your head is that it has a governing metaphor, and
+the metaphor does real work. **The interface is a two-colour printed sheet.** A printer gets one
+paper stock and two plates of ink and has to say everything with them, so:
+
+- the **substrate** is the paper — a cool grey page (`--color-surface`) with content sitting on a
+  slightly brighter sheet (`--color-surface-raised`);
+- the **ink plate** carries everything structural — body text, table rules, control borders, labels;
+- the **accent plate** (HTX's violet) is allowed exactly four jobs: hierarchy numbers, active state,
+  the one primary action on a page, and the focus ring.
+
+The four-jobs rule is the important one, and it is a *design* rule rather than a technical one. Colour
+communicates by being scarce. If violet also became the colour of headings, and of hover, and of
+chips, then a violet thing would no longer mean anything in particular and the user would have to
+read every element to find the actionable one. Keeping it to a fifth of the page is what lets someone
+find the primary button without looking for it. The same logic is why there is no success green: a
+confirmation is not an emergency, so it is printed on the accent plate like every other piece of
+state, and the system carries two fewer colours for no loss of meaning. The one exception, `danger`,
+is documented as an exception in `index.css` — in a tool people actually work in, "this went wrong"
+has to be unmissable, and that outranks tidiness.
+
+Type follows the same shape: two voices, one job each. Work Sans reads sentences; a monospace stack
+carries *facts* — task numbers, counts, column headers. That is not decoration. Monospace digits are
+all the same width, so `1.1.1` sits directly under `1.1` down the number column and the task list
+reads as an outline rather than a stack of strings.
+
+Three files hold all of it, and none of them is a component:
+
+| File | Holds |
+|---|---|
+| `src/index.css` | Every token — colours, radii, font stacks — each with the reasoning next to it. |
+| `src/components/typeStyles.ts` | The two typographic voices, as reusable class strings. |
+| `src/components/buttonStyles.ts` | The two button looks. |
+
+The last two export plain strings rather than `<Button>` components on purpose. Almost every use site
+needs to add a class or two of its own (`self-start`, a width cap, a grid position), which is trivial
+to do with a string and awkward to do through a component's props. Reach for a component when there
+is behaviour to share, and a string when there is only appearance.
+
+**One trap worth knowing, because no type checker catches it.** The browser applies CSS
+`text-transform` *before* it computes an element's accessible name. So styling a `<legend>` or a
+button label with an `uppercase` class silently renames that control for screen readers and for any
+test that finds elements the way a user would (`getByRole('group', { name: 'Skills for task 1' })`).
+That is why `microLabelClass` — the only class in the app that uppercases anything — is used strictly
+on decorative text and `<th>` column headers, never on a label, legend, button or option. If you add
+a micro-label somewhere new, check first whether its text is somebody's accessible name.
+
+## 7. Running and testing
 
 From the repo root (all commands use the npm workspace, not `apps/web` directly):
 

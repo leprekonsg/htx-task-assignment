@@ -1,48 +1,115 @@
 /*
- * Global styles. `@import "tailwindcss"` pulls in Tailwind's utility classes (things like `flex`,
- * `px-4`, `text-sm`). The `@theme` block below is where we name our own design tokens — colours,
- * radii, the font stack — as CSS variables; Tailwind then generates matching utilities for them
- * (`--color-accent` becomes usable as `bg-accent` / `text-accent` / `border-accent`, etc). Every
- * component in this app should reach for those generated utilities, never a raw Tailwind palette
- * class (`bg-blue-500`) or an inline hex colour — that way the whole app's colours live in one
- * place. Below the theme is a small `@layer base` with the handful of global rules (body colours,
- * focus ring, table number alignment) that apply everywhere rather than to one component.
+ * Global styles and the app's entire design system.
+ *
+ * `@import "tailwindcss"` pulls in Tailwind's utility classes (`flex`, `px-4`, `text-sm`). The
+ * `@theme` block below names our own design tokens as CSS variables, and Tailwind generates
+ * matching utilities for each one (`--color-accent` becomes `bg-accent` / `text-accent` /
+ * `border-accent`). Every component reaches for those generated utilities — never a raw Tailwind
+ * palette class (`bg-blue-500`) and never an inline hex — so the whole app's look lives here.
+ *
+ * ── The visual system: two ink plates on paper ──────────────────────────────────────────────
+ *
+ * The look is borrowed from two-colour editorial printing, and taking that metaphor literally is
+ * what keeps it disciplined. A printer gets one sheet of paper and two plates of ink, and has to
+ * say everything with them. So do we:
+ *
+ *   SUBSTRATE (the paper)  `--color-surface` is a cool grey, not white. Content sits on a slightly
+ *                          brighter plate (`--color-surface-raised`), so "a sheet on a desk" is the
+ *                          figure/ground relationship rather than "a card with a shadow".
+ *
+ *   INK PLATE (dominant)   `--color-text` and the greys/rules under it carry *everything*
+ *                          structural: body text, table rules, borders, labels. If something is
+ *                          content or structure, it is printed in ink.
+ *
+ *   ACCENT PLATE (violet)  `--color-accent` and its tints do exactly four jobs and no others:
+ *                          hierarchy numbers, active/selected state, the single primary action on
+ *                          a page, and the focus ring. Four jobs is what keeps it to roughly a
+ *                          fifth of the page — the moment violet starts decorating things, it
+ *                          stops meaning anything.
+ *
+ * The violet is HTX's own brand colour, read off htx.gov.sg's stylesheet (#5c068c), as is the
+ * near-black (#12011c, a black with a violet cast) and the grey (#4f4f51). The typeface, Work Sans,
+ * is also theirs — self-hosted below rather than loaded from Google's CDN so the app still looks
+ * right with no network. We use their visual language only: no HTX name, logo or mark appears in
+ * the UI, because this app is not an HTX product and shouldn't imply that it is.
+ *
+ * `--color-danger` is a deliberate third plate, and the only exception to the two-ink rule. It is
+ * restricted to outright failure — a rejected request, a field that blocks submit — because in a
+ * tool people actually work in, "this went wrong" needs to be unmissable, and that outranks
+ * aesthetic purity. Note what is NOT here: there is no success green and no warning amber. A
+ * confirmation is not an emergency, so it is printed on the accent plate like every other piece of
+ * state, which removes two colours from the system without losing a single meaning.
+ *
+ * ── Typography ──────────────────────────────────────────────────────────────────────────────
+ *
+ * Two voices, one job each. Work Sans (`--font-sans`) is the display and reading voice. A
+ * monospace stack (`--font-mono`) is the utility voice, and carries anything that is a *fact*
+ * rather than a sentence: task numbers, counts, column headers, micro-labels. Tabular numerals mean
+ * "1.1.1" lines up with "1.1" down the number column, which is what turns a task list into a
+ * legible outline instead of a wall of rows. The shared class strings for those two voices live in
+ * components/typeStyles.ts, next to buttonStyles.ts.
  */
 @import 'tailwindcss';
 
+/*
+ * Work Sans, self-hosted. One variable-font file covers every weight from 400 to 700, so the whole
+ * type system costs a single 50 KB request and no CDN. `font-display: swap` means text is readable
+ * in the fallback stack immediately and reflows when the font arrives; the `unicode-range` is
+ * Google's own latin subset, so the browser skips the download entirely for pages of other scripts.
+ */
+@font-face {
+  font-family: 'Work Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/work-sans-latin-var.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @theme {
+  /* Display and reading voice. The fallbacks are ordered so the layout barely shifts on swap. */
   --font-sans:
-    system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji',
-    'Segoe UI Emoji';
+    'Work Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji';
+  /* Utility voice: numbers, counts, column headers, micro-labels. System stack — no extra download. */
+  --font-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
-  /* Surfaces */
-  --color-surface: #f7f7f8;
-  --color-surface-raised: #ffffff;
-  --color-border: #e2e2e6;
-  /* 3.2:1 against the page surface (WCAG 1.4.11 needs 3:1) — used where a border is the only
-     cue, e.g. the subtask nesting rail. */
-  --color-border-strong: #8a8a90;
+  /* ── Substrate ── the paper, and the brighter plate content sits on. */
+  --color-surface: #e9e9e5;
+  --color-surface-raised: #fafaf7;
+  /* Inset areas: skeleton bars, the trough behind a rule. Reads as ink soaked into the sheet. */
+  --color-surface-sunken: #deded9;
 
-  /* Text */
-  --color-text: #1c1c22;
-  --color-text-muted: #67676f;
+  /* ── Ink plate ── all content and structure. */
+  --color-text: #12011c;
+  /* 6.7:1 on the substrate, 7.8:1 on the raised plate — passes AA as real body text, not just as a hint. */
+  --color-text-muted: #4f4f51;
+  /* Hairline between rows and around quiet chips. Decorative only: never the sole cue for anything. */
+  --color-rule: #c9c9c4;
+  /* 3.5:1 on the substrate (WCAG 1.4.11 needs 3:1). Used wherever a rule or a control border IS the
+     only cue — select and input borders, the subtask nesting rail. */
+  --color-rule-strong: #78787e;
 
-  /* Accent (primary actions, focus, links) */
-  --color-accent: #2f5bff;
-  --color-accent-hover: #2447cc;
-  --color-accent-soft: #e8edff;
+  /* ── Accent plate ── hierarchy, active state, the one primary action, focus. Nothing else. */
+  /* 9.3:1 on the substrate; white on it is 11.3:1, so solid violet buttons pass AA comfortably. */
+  --color-accent: #5c068c;
+  --color-accent-hover: #430566;
+  /* 7:1 — the lighter violet used for hierarchy numbers and nesting rails, where full strength
+     would shout over the content it is numbering. */
+  --color-accent-muted: #7b35a3;
+  --color-accent-soft: #f0e4f7;
 
-  /* Status */
-  --color-danger: #c02b2b;
-  --color-danger-soft: #fbe9e9;
-  --color-success: #1f7a45;
-  --color-success-soft: #e6f4ea;
-  --color-warning-soft: #fdf3dc;
+  /* ── Failure plate ── the one exception to two inks. Errors only. 7.4:1 on the raised plate. */
+  --color-danger: #a4161a;
+  --color-danger-soft: #f7e7e7;
 
-  /* Radii */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* Printed sheets have square corners. Just enough radius to keep controls from looking hostile. */
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
 }
 
 @layer base {
@@ -50,9 +117,18 @@
     background-color: var(--color-surface);
     color: var(--color-text);
     font-family: var(--font-sans);
+    /* Work Sans has real optical polish at small sizes; let the browser use it. */
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
   }
 
+  /* Numbers in a table must line up column-wise, or the outline stops being scannable. */
   table {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The utility voice is always tabular too — task numbers, counts, everything. */
+  .font-mono {
     font-variant-numeric: tabular-nums;
   }
 

@@ -82,7 +82,7 @@ completion path, the depth-5 form cap, and inference (strict LLM assertion when 
 
 ## 6. Acceptance checklist
 
-Verified 2026-08-31 on a clean `docker compose up --build` (Playwright suite, 10/10) plus 135 unit/integration tests.
+Verified 2026-08-31 on a clean `docker compose up --build` (Playwright suite, 10/10) plus 138 unit/integration tests.
 
 - [x] 1 — tables, M:N relations, status enum, seed matches the table (`smoke.spec.ts` "seed data is present")
 - [x] 2 — all endpoints; Bob on a Frontend task → 409 `DEVELOPER_LACKS_SKILLS`, Carol → 200 (`rule-a.spec.ts`)

@@ -37,6 +37,7 @@ import {
   treeReducer,
 } from '../components/task-form/treeReducer';
 import { primaryButtonClass, secondaryButtonClass } from '../components/buttonStyles';
+import { displayClass } from '../components/typeStyles';
 import ErrorBanner from '../components/ErrorBanner';
 import { useCreateTask, useSkills } from '../api/hooks';
 
@@ -86,9 +87,11 @@ export default function CreateTaskPage() {
   };
 
   return (
-    <div className="flex max-w-3xl flex-col gap-4">
-      <h1 className="text-xl font-semibold text-text">Create task</h1>
-      <p className="text-sm text-text-muted">
+    <div className="flex max-w-3xl flex-col gap-6">
+      <header className="flex flex-col gap-3 border-b-2 border-text pb-3">
+        <h1 className={displayClass}>Create task</h1>
+      </header>
+      <p className="max-w-2xl text-sm text-text-muted">
         Give each task a title and, optionally, the skills it needs — leave skills empty and they'll
         be inferred from the title. Use "Add subtask" to nest tasks up to five levels deep.
       </p>
@@ -96,7 +99,7 @@ export default function CreateTaskPage() {
       {createTask.isError && (
         <div
           role="alert"
-          className="rounded-lg border border-danger-soft bg-danger-soft px-4 py-3 text-sm text-danger"
+          className="border-l-2 border-danger bg-danger-soft px-4 py-3 text-sm text-danger"
         >
           {createTask.error.message}
         </div>
@@ -109,7 +112,7 @@ export default function CreateTaskPage() {
         />
       )}
 
-      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-6">
         <TaskNodeForm
           node={state.root}
           path={[]}
@@ -118,7 +121,7 @@ export default function CreateTaskPage() {
           showErrors={showErrors}
         />
 
-        <div className="flex items-center gap-3 self-start">
+        <div className="flex flex-wrap items-center gap-4 self-start">
           <button
             type="submit"
             disabled={!canSubmit}

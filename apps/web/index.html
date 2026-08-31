@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Create nested tasks and assign them to developers whose skills match."
+    />
+    <meta name="theme-color" content="#5c068c" />
+    <!--
+      The stylesheet only asks for this font once it has been downloaded and parsed, by which point
+      the first paint has usually already happened in the fallback face. Preloading it here starts
+      the request alongside the CSS instead of after it, which removes most of the visible reflow.
+      `crossorigin` is not optional even for a same-origin font: fonts are always fetched in CORS
+      mode, and a preload whose mode doesn't match the real request is simply downloaded twice.
+    -->
+    <link
+      rel="preload"
+      href="/fonts/work-sans-latin-var.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <title>Task Assignment</title>
   </head>
   <body>

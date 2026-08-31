@@ -18,6 +18,7 @@ import type { Developer, TaskListRow, TaskStatus } from '@htx/shared';
 import AssigneeSelect from './AssigneeSelect';
 import SkillBadges from './SkillBadges';
 import StatusSelect from './StatusSelect';
+import { microTextClass, taskNumberClass } from './typeStyles';
 import { useUpdateTask } from '../api/hooks';
 
 const INDENT_PER_DEPTH_PX = 20;
@@ -40,27 +41,55 @@ export default function TaskRow({ row, developers, assignmentUnavailable }: Task
     updateTask.mutate({ id: task.id, assigneeId });
   };
 
+  // Rule B (a parent can't be marked done while a subtask isn't) is enforced by the server, not
+  // here — but a select that just silently rejects "Done" is a bad surprise, so when it applies we
+  // print the reason as a quiet fact under the status control, ahead of time. It's plain text, not
+  // an error: the Done option stays enabled, and if the user picks it anyway the server still says
+  // no and the usual inline alert (below) still explains why.
+  const subtaskCount = task.subtasks.length;
+  const doneSubtasks = task.subtasks.filter((subtask) => subtask.status === 'done').length;
+  const hasUnfinishedSubtasks = subtaskCount > 0 && doneSubtasks < subtaskCount;
+
   return (
     <>
-      <tr className="border-b border-border last:border-b-0">
-        <td className="px-3 py-2 align-top text-text-muted">{number}</td>
+      <tr className="border-b border-rule transition-colors last:border-b-0 hover:bg-surface">
+        <td className={`px-3 py-3 align-top ${taskNumberClass}`}>{number}</td>
         <td
-          className="px-3 py-2 align-top"
+          className="px-3 py-3 align-top"
           style={{ paddingLeft: 12 + depth * INDENT_PER_DEPTH_PX }}
         >
-          {task.title}
+          {/* Subtask titles get a hierarchy rail (a left border) so depth is legible even before
+              the reader registers the indent or the number's dotted depth. */}
+          <span
+            className={
+              depth > 0 ? 'block border-l-2 border-accent-muted/35 pl-3' : 'block font-medium'
+            }
+          >
+            {task.title}
+          </span>
         </td>
-        <td className="px-3 py-2 align-top">
+        <td className="px-3 py-3 align-top">
           <SkillBadges
             skills={task.skills}
             skillsSource={task.skillsSource}
             skillsModel={task.skillsModel}
           />
         </td>
-        <td className="px-3 py-2 align-top">
-          <StatusSelect task={task} disabled={updateTask.isPending} onChange={handleStatusChange} />
+        <td className="px-3 py-3 align-top">
+          <div className="flex flex-col gap-1">
+            <StatusSelect
+              task={task}
+              disabled={updateTask.isPending}
+              onChange={handleStatusChange}
+            />
+            {hasUnfinishedSubtasks && (
+              <p className={microTextClass}>
+                {doneSubtasks}/{subtaskCount} subtasks done
+              </p>
+            )}
+          </div>
         </td>
-        <td className="px-3 py-2 align-top">
+        <td className="px-3 py-3 align-top">
           <AssigneeSelect
             task={task}
             developers={developers}
@@ -71,8 +100,11 @@ export default function TaskRow({ row, developers, assignmentUnavailable }: Task
       </tr>
       {updateTask.isError && (
         <tr>
-          <td colSpan={5} className="px-3 pb-2">
-            <p role="alert" className="text-sm text-danger">
+          <td colSpan={5} className="px-3 pb-3">
+            <p
+              role="alert"
+              className="border-l-2 border-danger bg-danger-soft px-3 py-2 text-sm text-danger"
+            >
               {updateTask.error.message}
             </p>
           </td>

@@ -219,6 +219,49 @@ describe('TaskListPage', () => {
     expect(screen.getByText('Design login page')).toBeInTheDocument();
   });
 
+  it('summarises the list beside the heading without renaming the heading', async () => {
+    renderPage();
+    await screen.findByText('Build API');
+
+    // The census has to sit *outside* the <h1>: putting it inside would change the heading's
+    // accessible name from "Tasks" to "Tasks 3 tasks · 0 done · 2 unassigned".
+    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeInTheDocument();
+    expect(screen.getByText('3 tasks · 0 done · 2 unassigned')).toBeInTheDocument();
+  });
+
+  it('says why a parent is not completable yet, without disabling the Done option', async () => {
+    renderPage();
+    await screen.findByText('Build API');
+
+    // "Build API" has one subtask ("Write tests") that is still to-do.
+    expect(screen.getByText('0/1 subtasks done')).toBeInTheDocument();
+
+    // Crucially this is a hint, not a lock: Rule B is the server's to enforce, and the user can
+    // still try, getting the server's own message back (covered by the rejected-PATCH test above).
+    const statusSelect = screen.getByRole('combobox', { name: 'Status of Build API' });
+    const done = within(statusSelect).getByRole('option', { name: 'Done' }) as HTMLOptionElement;
+    expect(done.disabled).toBe(false);
+
+    // A parent whose subtasks are all done gets no hint, and neither does a leaf.
+    expect(screen.queryByText('1/1 subtasks done')).not.toBeInTheDocument();
+  });
+
+  it('offers a distinctly named action in the empty state', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/tasks') return jsonResponse(200, []);
+      if (url === '/api/developers') return jsonResponse(200, developers);
+      throw new Error(`Unhandled request: ${url}`);
+    }) as unknown as typeof fetch;
+    renderPage();
+
+    expect(await screen.findByText('No tasks yet')).toBeInTheDocument();
+    // Deliberately not "Create task": the app shell already has a link by that name, and two
+    // controls sharing an accessible name make the page ambiguous to assistive tech and to tests.
+    expect(screen.getByRole('link', { name: 'Create the first task' })).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
   it('retries the developers query on Retry, re-enabling the assignee select', async () => {
     const user = userEvent.setup();
     const fetchState = { developersOk: false };

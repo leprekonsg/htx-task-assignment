@@ -22,6 +22,7 @@ import ErrorBanner from '../components/ErrorBanner';
 import FlashBanner from '../components/FlashBanner';
 import SkeletonRows from '../components/SkeletonRows';
 import TaskRow from '../components/TaskRow';
+import { displayClass, microLabelClass } from '../components/typeStyles';
 import { useDevelopers, useTasks } from '../api/hooks';
 
 export default function TaskListPage() {
@@ -36,9 +37,26 @@ export default function TaskListPage() {
   const developers = developersQuery.data ?? [];
   const assignmentUnavailable = developersQuery.isPending || developersQuery.isError;
 
+  // A one-line census of the list — count, done, unassigned — read before a single row is read.
+  // It's a sibling of the `<h1>`, never inside it, so the heading's accessible name stays "Tasks".
+  let summary: string | null = null;
+  if (rows.length > 0) {
+    const doneCount = rows.filter((row) => row.task.status === 'done').length;
+    const unassignedCount = rows.filter((row) => row.task.assignee === null).length;
+    const segments = [
+      `${rows.length} ${rows.length === 1 ? 'task' : 'tasks'}`,
+      `${doneCount} done`,
+      ...(unassignedCount > 0 ? [`${unassignedCount} unassigned`] : []),
+    ];
+    summary = segments.join(' · ');
+  }
+
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold text-text">Tasks</h1>
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2 border-b-2 border-text pb-3">
+        <h1 className={displayClass}>Tasks</h1>
+        {summary && <p className={microLabelClass}>{summary}</p>}
+      </header>
 
       {flash && <FlashBanner message={flash} onDismiss={() => setFlash(null)} />}
 
@@ -59,23 +77,23 @@ export default function TaskListPage() {
       {!tasksQuery.isError && tasksQuery.isSuccess && rows.length === 0 && <EmptyState />}
 
       {!tasksQuery.isError && (tasksQuery.isLoading || rows.length > 0) && (
-        <div className="overflow-x-auto rounded-lg border border-border bg-surface-raised">
-          <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+        <div className="overflow-x-auto bg-surface-raised">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-border text-text-muted">
-                <th scope="col" className="px-3 py-2 font-medium">
-                  #
+              <tr className="border-b border-rule-strong">
+                <th scope="col" className={`px-3 py-2.5 ${microLabelClass}`}>
+                  No.
                 </th>
-                <th scope="col" className="px-3 py-2 font-medium">
+                <th scope="col" className={`px-3 py-2.5 ${microLabelClass}`}>
                   Title
                 </th>
-                <th scope="col" className="px-3 py-2 font-medium">
+                <th scope="col" className={`px-3 py-2.5 ${microLabelClass}`}>
                   Skills
                 </th>
-                <th scope="col" className="px-3 py-2 font-medium">
+                <th scope="col" className={`px-3 py-2.5 ${microLabelClass}`}>
                   Status
                 </th>
-                <th scope="col" className="px-3 py-2 font-medium">
+                <th scope="col" className={`px-3 py-2.5 ${microLabelClass}`}>
                   Assignee
                 </th>
               </tr>

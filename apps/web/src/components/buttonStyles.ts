@@ -1,11 +1,18 @@
 // The two button looks used across the whole app, kept in one place so "primary" and "secondary"
-// actually mean the same thing everywhere instead of drifting file to file. Primary (solid accent)
-// is for the one main action on a page — here, just "Create task". Secondary (bordered, neutral) is
-// for everything else — "Add subtask", "Remove". These are plain strings, not components, because
-// the buttons that use them need to add a class or two of their own (e.g. `self-start`) alongside
-// them.
-export const primaryButtonClass =
-  'rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60';
+// actually mean the same thing everywhere instead of drifting file to file. These are plain
+// strings, not components, because the buttons that use them need to add a class or two of their
+// own (e.g. `self-start`) alongside them. See typeStyles.ts for the typographic equivalent.
+//
+// There is exactly one primary button on any page, and it is the only solid violet object on that
+// page — "the single primary action" is one of the four jobs the accent plate is allowed to do (see
+// index.css). Everything else is secondary: an ink hairline on the paper, no fill. That's what
+// makes the violet mean something when it does appear. If a page ever seems to need two primary
+// buttons, that's a sign the page has two competing purposes, not that it needs another colour.
 
+export const primaryButtonClass =
+  'rounded-sm bg-accent px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-45';
+
+// `border-rule-strong` rather than the hairline `border-rule`: this border is the only thing
+// marking the button's hit area, and WCAG 1.4.11 wants 3:1 for a cue carrying that much weight.
 export const secondaryButtonClass =
-  'rounded-md border border-border px-3 py-1.5 text-sm font-medium text-text hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60';
+  'rounded-sm border border-rule-strong px-3.5 py-2 text-sm font-medium text-text transition-colors hover:border-text hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-45';

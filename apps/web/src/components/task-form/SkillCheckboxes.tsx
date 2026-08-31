@@ -21,16 +21,16 @@ export default function SkillCheckboxes({
   onToggle,
 }: SkillCheckboxesProps) {
   return (
-    <fieldset className="flex flex-col gap-1">
+    <fieldset className="flex flex-col gap-1.5">
       <legend className="text-sm font-medium text-text">{legend}</legend>
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1">
         {skills.map((skill) => (
-          <label key={skill.id} className="flex items-center gap-1.5 text-sm text-text">
+          <label key={skill.id} className="flex items-center gap-2 text-sm text-text">
             <input
               type="checkbox"
               checked={selectedSkillIds.includes(skill.id)}
               onChange={() => onToggle(skill.id)}
-              className="h-4 w-4 rounded border-border text-accent accent-accent"
+              className="h-4 w-4 rounded-sm border-rule-strong accent-accent"
             />
             {skill.name}
           </label>

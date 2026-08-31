@@ -16,6 +16,8 @@ Fastify 5 · React 19 (Vite) · Gemini API · Docker Compose**.
 - [System design](#system-design)
 - [API](#api)
 - [Frontend](#frontend)
+  - [Design system](#design-system)
+  - [Create Task form (Part 4.3)](#create-task-form-part-43)
 - [Testing](#testing)
 - [Dependencies and why](#dependencies-and-why)
 - [Assumptions](#assumptions)
@@ -238,17 +240,57 @@ createdAt, updatedAt, subtasks: Task[] }`.
 Two pages, matching the assignment's wireframes:
 
 - **Task List (`/`)** — one table for all tasks; subtasks are indented under their parent with hierarchical numbering
-  (1, 1.1, 1.1.1). Status and assignee are inline `<select>`s that save immediately; the assignee list disables
-  ineligible developers and says which skill they lack; a rejected change (409) shows the server's message in the row and
-  the row snaps back to the saved state. Skills inferred by the LLM carry an "AI-inferred" tag; tasks whose skills could
-  not be inferred say so.
+  (1, 1.1, 1.1.1) set in monospace so `1.1.1` lines up under `1.1`. A census beside the heading (*7 tasks · 2 done ·
+  1 unassigned*) gives the shape of the list before a single row is read. Status and assignee are inline `<select>`s
+  that save immediately; the assignee list disables ineligible developers and says which skill they lack; a parent that
+  still has unfinished subtasks says so under its status control (*0/2 subtasks done*) **before** you try, while
+  leaving Done selectable so the server stays the one that enforces Rule B; a rejected change (409) shows the server's
+  message in the row and the row snaps back to the saved state. Skills inferred by the LLM carry an "AI-inferred" tag;
+  tasks whose skills could not be inferred say so.
 - **Create Task (`/tasks/new`)** — a title, optional skills, and nested subtasks to any shape up to depth 5, submitted as
   one tree; the details are in the next section. There is no assignee field — assignment happens on the list.
 
+![The Task List: hierarchical numbering, inline status and assignee, AI-inferred tag](docs/images/task-list.png)
+
 State management is intentionally minimal: TanStack Query owns server state (fetching, caching, invalidation after a
 mutation); a `useReducer` over an immutable tree owns the create form; there is no global store. Styling is Tailwind v4
-with the design tokens declared in one `@theme` block and native form controls. New to React? Start with
+with every design token declared in one `@theme` block, and native form controls throughout. New to React? Start with
 [`docs/frontend-guide.md`](docs/frontend-guide.md), which walks through this codebase file by file.
+
+### Design system
+
+The interface is built like a two-colour printed sheet: one paper stock, two plates of ink. Taking that constraint
+literally is what keeps it disciplined, and it is enforced in exactly one place — the `@theme` block in
+[`apps/web/src/index.css`](apps/web/src/index.css). No component writes a hex value or a raw Tailwind palette class.
+
+| Plate | Colour | What it is allowed to carry |
+|---|---|---|
+| Substrate | `#e9e9e5` paper, `#fafaf7` sheet | The page itself. Content sits on a brighter plate, so the figure/ground reads as "a sheet on a desk" rather than "a card with a shadow". |
+| Ink (dominant) | `#12011c`, greys `#4f4f51` / `#78787e` / `#c9c9c4` | Everything structural: body text, table rules, control borders, labels. |
+| Accent (violet) | `#5c068c`, `#7b35a3`, `#f0e4f7` | Exactly four jobs — hierarchy numbers, active/selected state, the one primary action per page, and the focus ring. Four jobs is what keeps it near a fifth of the page; the moment violet starts decorating things it stops meaning anything. |
+| Failure | `#a4161a` | The single deliberate exception to two inks, restricted to rejected requests and blocking validation. In a tool people work in, "this went wrong" has to be unmissable, and that outranks aesthetic purity. |
+
+There is no success green and no warning amber. A confirmation is not an emergency, so it is printed on the accent
+plate like every other piece of state — two fewer colours in the system, no meanings lost.
+
+Type is two voices with one job each. **Work Sans** is the reading voice — titles, sentences, names. A monospace stack
+is the utility voice and carries anything that is a *fact* rather than a sentence: task numbers, counts, column
+headers. Monospace digits share a width, so `1.1.1` sits directly under `1.1` down the number column and the task list
+reads as an outline instead of a stack of strings. The shared class strings for both live in
+[`apps/web/src/components/typeStyles.ts`](apps/web/src/components/typeStyles.ts), beside `buttonStyles.ts`.
+
+The palette and typeface are taken from [htx.gov.sg](https://www.htx.gov.sg/who-we-are/our-purpose) — the violet, the
+violet-cast black and Work Sans are read from that site's own stylesheet. Only the visual language is borrowed: no HTX
+name, logo or mark appears anywhere in the UI, because this app is not an HTX product and should not imply that it is.
+
+Work Sans is **self-hosted** — one 50 KB variable file covering weights 400–700 in
+[`apps/web/public/fonts/`](apps/web/public/fonts/), under the [SIL Open Font
+License](apps/web/public/fonts/OFL.txt) — rather than fetched from a CDN, so `docker compose up` stays hermetic and the
+app renders identically with no network access.
+
+Contrast was measured in the rendered page rather than assumed: body text 6.7:1 on the substrate and 19:1 on the sheet,
+violet 9.3:1 (white on violet 11.3:1), and every control border and nesting rail at 3.6:1 or better. The previous
+control borders were ~1.3:1 and failed WCAG 1.4.11.
 
 ### Create Task form (Part 4.3)
 
@@ -261,6 +303,8 @@ The wireframe shows one *New Task Component* per task, each with its own **Add S
 | Add Subtask | On every block. Appends an empty subtask under that task and moves keyboard focus into its title, so typing can continue immediately. Disappears once a branch reaches depth 5, the API's limit, so the form cannot build a tree the server would reject. |
 | Save | **Create task** — or **Create 3 tasks**: the label counts the nodes, because one click persists the whole tree in one `POST /api/tasks` (atomic: any invalid node rolls back everything). |
 | — | **Remove** on every subtask (the root cannot be removed). When the subtask has children of its own it asks first ("Remove task 1.1 and its 2 subtasks?") and afterwards returns focus to the parent's Add subtask button. |
+
+![The Create Task form: nested task blocks, each with its own Add subtask](docs/images/create-task.png)
 
 Everything the form knows is one `useReducer` state: a tree of `{ title, skillIds, subtasks }` nodes. Every edit — typing a
 title three levels down, ticking a skill, adding or removing a block — is an action addressed by a **path** (`[0, 2]` is the
@@ -280,12 +324,12 @@ Behaviour worth knowing when you try it:
 
 ## Testing
 
-Four layers, 145 tests in total; every layer runs in CI.
+Four layers, 148 tests in total; every layer runs in CI.
 
 ```bash
 npm test                          # shared + api + web (API tests need `npm run db:up` first)
 npx vitest run --root apps/api    # API only: 40 unit + 47 integration tests against Postgres (taskapp_test database)
-npx vitest run --root apps/web    # web only: 38 tests, Testing Library + jsdom, fetch mocked
+npx vitest run --root apps/web    # web only: 41 tests, Testing Library + jsdom, fetch mocked
 npm run test:e2e                  # 10 Playwright tests against the real Docker Compose stack (builds and starts it)
 ```
 
@@ -297,12 +341,13 @@ npm run test:e2e                  # 10 Playwright tests against the real Docker 
   item treated as unresolved, one batched call per request); the
   classifier chain, prompt and JSON extraction (including Gemma-style prose around the JSON); config parsing;
   `/docs/json` validity.
-- **web (38)** — form reducer (paths, structural sharing, depth cap, payload shape, numbering, node counts, first
+- **web (41)** — form reducer (paths, structural sharing, depth cap, payload shape, numbering, node counts, first
   missing title); Task List rendering (numbering, badges, disabled ineligible developers, PATCH on change, 409 message,
   developers-failed banner with assignment disabled); Create Task: nesting and submitted payload, submit with an empty
   title focuses and names the offending task, Add subtask focuses the new title, Remove confirms for a subtree and returns
   focus to the parent, "Create N tasks" / "Creating…" labels with the inference hint, pluralised flash, skills-failed
-  banner.
+  banner; and the list's own reporting — the census line sits beside the heading without renaming it, a parent with
+  unfinished subtasks says so while leaving Done selectable, and the empty state offers a distinctly named action.
 - **e2e (10, `e2e/`)** — Playwright drives Chromium against `docker compose up --build`, i.e. nginx → API → Postgres
   exactly as a reviewer runs it: smoke (health, `/docs`, seed data), create a task from the UI, Rule A in the assignee
   dropdown (Bob disabled for a Frontend task, Carol accepted), the empty-title alert on the create form, a three-level

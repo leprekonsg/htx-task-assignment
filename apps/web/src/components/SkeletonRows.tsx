@@ -12,8 +12,8 @@ export default function SkeletonRows() {
       {Array.from({ length: ROWS }, (_, row) => (
         <tr key={row} aria-hidden="true">
           {Array.from({ length: COLUMNS }, (_, column) => (
-            <td key={column} className="px-3 py-3">
-              <div className="h-4 animate-pulse rounded bg-border" />
+            <td key={column} className="px-3 py-3.5">
+              <div className="h-4 animate-pulse rounded-sm bg-surface-sunken" />
             </td>
           ))}
         </tr>

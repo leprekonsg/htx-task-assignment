@@ -4,6 +4,12 @@
 // *visible* rather than just enforced — a developer missing a skill still appears in the list, but
 // as a `disabled` option whose label says which skill they're missing, using the shared
 // `missingSkills` helper so this matches exactly what the server would reject.
+//
+// One layout consequence of those explanatory labels: a `<select>` is sized by its widest
+// option, so "Bob — lacks Frontend" would stretch this control far past the width any
+// selected name needs, and the task table's right-hand columns would swallow the space the
+// Title column wants. Hence the width cap in the class list. Nothing is lost — the open
+// dropdown is drawn by the operating system and is free to be wider than the closed control.
 import type { Developer, Task } from '@htx/shared';
 import { missingSkills } from '@htx/shared';
 
@@ -26,7 +32,7 @@ export default function AssigneeSelect({
       value={task.assignee ? String(task.assignee.id) : ''}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))}
-      className="rounded-md border border-border bg-surface-raised px-2 py-1 text-sm text-text disabled:cursor-not-allowed disabled:opacity-60"
+      className="w-full max-w-[11rem] truncate rounded-sm border border-rule-strong bg-surface-raised px-2.5 py-1.5 text-sm text-text transition-colors hover:border-text disabled:cursor-not-allowed disabled:opacity-45"
     >
       <option value="">Unassigned</option>
       {developers.map((developer) => {

@@ -21,12 +21,20 @@
 //     OWN "Add subtask" button through a ref. That button is a sibling of the child being removed —
 //     it stays mounted throughout the removal — so it's always a safe, findable place to land focus
 //     (every parent has one: a parent is at most depth 4, and `canAddSubtaskAt` is true there).
+//
+// The two things that show a subtask's place in the tree are printed on different plates (see
+// index.css for the "two ink plates" rationale). The rail down the left of a non-root block is
+// structure — it just says "everything to my right is nested under something" — so it's ink
+// (`border-rule-strong`). The `Task {number}` label is the one piece of text that actually spells
+// out the hierarchy, which is one of the accent plate's four allowed jobs, so it's set in violet
+// via `taskNumberClass`.
 import { useRef, type Dispatch } from 'react';
 import type { Skill } from '@htx/shared';
 import type { FormAction, FormNode, Path } from './treeReducer';
 import { canAddSubtaskAt, countNodes, taskNumber } from './treeReducer';
 import SkillCheckboxes from './SkillCheckboxes';
 import { secondaryButtonClass } from '../buttonStyles';
+import { taskNumberClass } from '../typeStyles';
 
 interface TaskNodeFormProps {
   node: FormNode;
@@ -87,11 +95,11 @@ export default function TaskNodeForm({
       className={
         isRoot
           ? 'flex flex-col gap-3'
-          : 'flex flex-col gap-3 border-l-2 border-border-strong pl-4 pt-3 first:pt-0'
+          : 'flex flex-col gap-3 border-l-2 border-rule-strong pl-5 pt-4 first:pt-0'
       }
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium tracking-wide text-text-muted">Task {number}</span>
+        <span className={taskNumberClass}>Task {number}</span>
         {!isRoot && (
           <button
             type="button"
@@ -117,12 +125,10 @@ export default function TaskNodeForm({
           onChange={(event) => dispatch({ type: 'setTitle', path, title: event.target.value })}
           aria-invalid={invalid ? 'true' : undefined}
           aria-describedby={invalid ? errorId : undefined}
-          className={`rounded-md border bg-surface-raised px-3 py-1.5 text-sm text-text ${
-            invalid ? 'border-danger' : 'border-border'
-          }`}
+          className={`rounded-sm border bg-surface-raised px-3 py-2 text-sm text-text transition-colors ${invalid ? 'border-danger' : 'border-rule-strong hover:border-text'}`}
         />
         {invalid && (
-          <p id={errorId} className="text-xs text-danger">
+          <p id={errorId} className="text-xs font-medium text-danger">
             Title is required
           </p>
         )}
