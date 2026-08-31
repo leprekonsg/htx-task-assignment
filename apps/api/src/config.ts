@@ -28,7 +28,7 @@ const EnvSchema = z.object({
   /** Whole-call budget for one create request's inference, across every model in the chain. */
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   /** Per-attempt HTTP timeout and attempts for the primary model (fallbacks get one attempt each). */
-  LLM_ATTEMPT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  LLM_ATTEMPT_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
   LLM_PRIMARY_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(2),
 });
 
