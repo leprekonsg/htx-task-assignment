@@ -10,7 +10,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "verbatimModuleSyntax": true,
-    "erasableSyntaxOnly": true,
     "isolatedModules": true,
     "skipLibCheck": true,
     "declaration": true,
