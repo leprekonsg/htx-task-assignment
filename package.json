@@ -22,18 +22,21 @@
     "format:check": "prettier --check .",
     "test": "npm run test --workspaces --if-present",
     "db:up": "docker compose up -d db",
-    "db:migrate": "npm run migrate -w @htx/api"
+    "db:migrate": "npm run migrate -w @htx/api",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:ui": "playwright test --config e2e/playwright.config.ts --ui"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.62.1",
     "concurrently": "10.0.5",
     "eslint": "10.9.1",
     "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.5",
     "globals": "17.11.0",
     "prettier": "3.9.6",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.68.0",
-    "eslint-plugin-react-hooks": "7.1.1",
-    "eslint-plugin-react-refresh": "0.5.5"
+    "typescript-eslint": "8.68.0"
   }
 }
