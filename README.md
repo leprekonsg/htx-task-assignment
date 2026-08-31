@@ -17,8 +17,8 @@ Fastify 5 · React 19 (Vite) · Gemini API · Docker Compose**.
 - [System design](#system-design)
 - [API](#api)
 - [Frontend](#frontend)
-  - [Design system](#design-system)
   - [Create Task form (Part 4.3)](#create-task-form-part-43)
+  - [Design system](#design-system)
 - [Testing](#testing)
 - [Dependencies and why](#dependencies-and-why)
 - [Assumptions](#assumptions)
@@ -113,14 +113,17 @@ Other scripts (all from the repo root): `npm run typecheck` · `npm run lint` ·
 
 ## Configuration
 
-All configuration is by environment variable (`.env` is read by Compose and by the dev scripts; `.env.example`
-documents every key). The API validates its environment at startup with Zod and refuses to start on a bad value.
+All configuration is by environment variable (`.env` is read by Compose and by the dev scripts). `.env.example`
+carries the keys you would normally set; every key the API itself reads is declared in
+[`apps/api/src/config.ts`](apps/api/src/config.ts), which validates them at startup with Zod and refuses to start on a
+bad value.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://taskapp:taskapp@localhost:5432/taskapp` | Postgres connection string (Compose points it at the `db` service) |
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | API listen address |
 | `LOG_LEVEL` | `info` | pino log level |
+| `NODE_ENV` | `development` | Log format only: pretty in `development`, silent in `test`, JSON otherwise (the image sets `production`) |
 | `GEMINI_API_KEY` | *(unset)* | Enables skill inference. Unset ⇒ inference disabled |
 | `LLM_MODEL` | `gemini-3.5-flash-lite` | Primary model |
 | `LLM_FALLBACK_MODELS` | `gemma-4-31b-it,gemma-4-26b-a4b-it` | Tried in order when the primary fails (quota, timeout, bad output) |
@@ -130,6 +133,8 @@ documents every key). The API validates its environment at startup with Zod and 
 | `POSTGRES_USER/PASSWORD/DB` | `taskapp` | Used by Compose to create the database |
 
 ## System design
+
+Every choice below had alternatives. The ones weighed and rejected, and why, are in [`docs/PLAN.md`](docs/PLAN.md).
 
 ### Architecture
 
@@ -304,6 +309,36 @@ mutation); a `useReducer` over an immutable tree owns the create form; there is 
 with every design token declared in one `@theme` block, and native form controls throughout. New to React? Start with
 [`docs/frontend-guide.md`](docs/frontend-guide.md), which walks through this codebase file by file.
 
+### Create Task form (Part 4.3)
+
+The wireframe shows one *New Task Component* per task, each with its own **Add Subtask**, nested and numbered
+1 → 1.1 → 1.1.1, and a single **Save**. It maps onto the code like this:
+
+| Wireframe | Implementation |
+|---|---|
+| New Task Component 1 / 1.1 / 1.1.1 | `TaskNodeForm` (`apps/web/src/components/task-form/`) — one component for one task block (title, skill checkboxes, its own buttons) that **renders itself** once per subtask, so the tree grows on the same page with no navigation or modal. Blocks are labelled `Task 1`, `Task 1.1`, `Task 1.1.1` and indented under a rail, matching the numbering the Task List will show once saved. |
+| Add Subtask | On every block. Appends an empty subtask under that task and moves keyboard focus into its title, so typing can continue immediately. Disappears once a branch reaches depth 5, the API's limit, so the form cannot build a tree the server would reject. |
+| Save | **Create task** — or **Create 3 tasks**: the label counts the nodes, because one click persists the whole tree in one `POST /api/tasks` (atomic: any invalid node rolls back everything). |
+| — | **Remove** on every subtask (the root cannot be removed). When the subtask has children of its own it asks first ("Remove task 1.1 and its 2 subtasks?") and afterwards returns focus to the parent's Add subtask button. |
+
+![The Create Task form: nested task blocks, each with its own Add subtask](docs/images/create-task.png)
+
+Everything the form knows is one `useReducer` state: a tree of `{ title, skillIds, subtasks }` nodes. Every edit — typing a
+title three levels down, ticking a skill, adding or removing a block — is an action addressed by a **path** (`[0, 2]` is the
+third subtask of the first subtask), and the reducer (`treeReducer.ts`, a pure function with its own unit tests) returns a new
+tree with only that branch replaced. `TaskNodeForm` holds no state of its own; that is what lets the page validate and
+submit the whole tree at once.
+
+Behaviour worth knowing when you try it:
+
+- **Validation names the problem instead of greying out the button.** Submitting with an empty title anywhere in the tree
+  focuses that field, marks it, and says "Task 1.1 needs a title" beside the button — even when the field is off-screen.
+- **Skills are optional per task.** Any task left without skills is sent to the LLM (Part 5). While that request is in
+  flight the button reads "Creating…" and a status line explains that skills are being inferred, which can take a few seconds.
+- **Reference data gates the form, visibly.** If `GET /api/skills` fails, a banner with Retry explains why creation is
+  unavailable rather than offering an empty skill list.
+- Success returns to the Task List with a flash message naming what was created: *Created "Reporting feature" and 2 subtasks*.
+
 ### Design system
 
 The portal is named **reX** — a nod to Jira, whose own name came from *Gojira*. The lowercase `re` is live text in
@@ -345,50 +380,21 @@ Contrast was measured in the rendered page rather than assumed: body text 6.7:1 
 violet 9.3:1 (white on violet 11.3:1), and every control border and nesting rail at 3.6:1 or better. The previous
 control borders were ~1.3:1 and failed WCAG 1.4.11.
 
-### Create Task form (Part 4.3)
-
-The wireframe shows one *New Task Component* per task, each with its own **Add Subtask**, nested and numbered
-1 → 1.1 → 1.1.1, and a single **Save**. It maps onto the code like this:
-
-| Wireframe | Implementation |
-|---|---|
-| New Task Component 1 / 1.1 / 1.1.1 | `TaskNodeForm` (`apps/web/src/components/task-form/`) — one component for one task block (title, skill checkboxes, its own buttons) that **renders itself** once per subtask, so the tree grows on the same page with no navigation or modal. Blocks are labelled `Task 1`, `Task 1.1`, `Task 1.1.1` and indented under a rail, matching the numbering the Task List will show once saved. |
-| Add Subtask | On every block. Appends an empty subtask under that task and moves keyboard focus into its title, so typing can continue immediately. Disappears once a branch reaches depth 5, the API's limit, so the form cannot build a tree the server would reject. |
-| Save | **Create task** — or **Create 3 tasks**: the label counts the nodes, because one click persists the whole tree in one `POST /api/tasks` (atomic: any invalid node rolls back everything). |
-| — | **Remove** on every subtask (the root cannot be removed). When the subtask has children of its own it asks first ("Remove task 1.1 and its 2 subtasks?") and afterwards returns focus to the parent's Add subtask button. |
-
-![The Create Task form: nested task blocks, each with its own Add subtask](docs/images/create-task.png)
-
-Everything the form knows is one `useReducer` state: a tree of `{ title, skillIds, subtasks }` nodes. Every edit — typing a
-title three levels down, ticking a skill, adding or removing a block — is an action addressed by a **path** (`[0, 2]` is the
-third subtask of the first subtask), and the reducer (`treeReducer.ts`, a pure function with its own unit tests) returns a new
-tree with only that branch replaced. `TaskNodeForm` holds no state of its own; that is what lets the page validate and
-submit the whole tree at once.
-
-Behaviour worth knowing when you try it:
-
-- **Validation names the problem instead of greying out the button.** Submitting with an empty title anywhere in the tree
-  focuses that field, marks it, and says "Task 1.1 needs a title" beside the button — even when the field is off-screen.
-- **Skills are optional per task.** Any task left without skills is sent to the LLM (Part 5). While that request is in
-  flight the button reads "Creating…" and a status line explains that skills are being inferred, which can take a few seconds.
-- **Reference data gates the form, visibly.** If `GET /api/skills` fails, a banner with Retry explains why creation is
-  unavailable rather than offering an empty skill list.
-- Success returns to the Task List with a flash message naming what was created: *Created "Reporting feature" and 2 subtasks*.
-
 ## Testing
 
 Four layers, 206 tests in total; every layer runs in CI.
 
 ```bash
-npm test                          # shared + api + web (API tests need `npm run db:up` first)
-npx vitest run --root apps/api    # API only: 59 unit + 55 integration tests against Postgres (taskapp_test database)
-npx vitest run --root apps/web    # web only: 59 tests, Testing Library + jsdom, fetch mocked
-npm run test:e2e                  # 13 Playwright tests against the real Docker Compose stack (builds and starts it)
+npm test                              # shared + api + web (API tests need `npm run db:up` first)
+npx vitest run --root packages/shared # shared only: 20 tests, no database needed
+npx vitest run --root apps/api        # API only: 59 unit + 55 integration tests against Postgres (taskapp_test database)
+npx vitest run --root apps/web        # web only: 59 tests, Testing Library + jsdom, fetch mocked
+npm run test:e2e                      # 13 Playwright tests against the real Docker Compose stack (builds and starts it)
 ```
 
-- **shared (20)** — Rule A helpers, request schemas (title bounds, duplicate skill ids, depth limit), tree numbering,
+- **shared** — Rule A helpers, request schemas (title bounds, duplicate skill ids, depth limit), tree numbering,
   the visibility-aware traversal folding uses, and the descendant counts Rule B is stated in.
-- **api (114)** — every error code has a test that triggers it; nested create persists all nodes and rolls back entirely
+- **api** — every error code has a test that triggers it; nested create persists all nodes and rolls back entirely
   on an invalid deep node; Rule A for each seeded developer; Rule B for done / reopen / add-under-done / grandchild
   cases; the Rule B **concurrency race** (25 rounds, invariant asserted after each); inference with a fake classifier
   (LLM result, failure ⇒ `unresolved`, a genuinely empty result kept, unknown skill names filtered and an all-unknown
@@ -397,14 +403,14 @@ npm run test:e2e                  # 13 Playwright tests against the real Docker 
   `/docs/json` validity; the local-only guard in front of the destructive database commands; and the demo fixture,
   loaded and then checked against Rule A, Rule B and the depth limit — and reloaded, to prove the second load returns
   the identical tree.
-- **web (59)** — form reducer (paths, structural sharing, depth cap, payload shape, numbering, node counts, first
+- **web** — form reducer (paths, structural sharing, depth cap, payload shape, numbering, node counts, first
   missing title); Task List rendering (numbering, badges, disabled ineligible developers, PATCH on change, 409 message,
   developers-failed banner with assignment disabled); Create Task: nesting and submitted payload, submit with an empty
   title focuses and names the offending task, Add subtask focuses the new title, Remove confirms for a subtree and returns
   focus to the parent, "Create N tasks" / "Creating…" labels with the inference hint, pluralised flash, skills-failed
   banner; and the list's own reporting — the census line sits beside the heading without renaming it, a parent with
   unfinished subtasks says so while leaving Done selectable, and the empty state offers a distinctly named action.
-- **e2e (13, `e2e/`)** — Playwright drives Chromium against `docker compose up --build`, i.e. nginx → API → Postgres
+- **e2e** (`e2e/`) — Playwright drives Chromium against `docker compose up --build`, i.e. nginx → API → Postgres
   exactly as a reviewer runs it: smoke (health, `/docs`, seed data), create a task from the UI, Rule A in the assignee
   dropdown (Bob disabled for a Frontend task, Carol accepted), the empty-title alert on the create form, a three-level
   tree created from the nested form with 1 / 1.1 / 1.1.1 numbering, both Rule B rejections and the bottom-up completion
@@ -447,11 +453,14 @@ Runtime dependencies are kept to what the assignment needs; each one below is th
 | `@tanstack/react-query` | web | Server-state cache with loading/error states and invalidation after mutations — removes hand-written `useEffect` fetching and stale-data bugs. |
 | `tailwindcss`, `@tailwindcss/vite` | web (build) | Utility CSS with the design tokens declared in CSS (`@theme`); zero config. A component library (shadcn) was considered and rejected: ~6 extra packages plus vendored component code for two pages, and it replaces the native `<select>` the wireframe uses. |
 
+Every package above was vetted before it was picked: current release, maintenance, licence, OSV/GHSA advisories and a
+name-by-name check against the 2025–26 npm supply-chain incidents, plus the case for Fastify over Express and NestJS.
+One section per dependency, in [`docs/research/`](docs/research/).
+
 Development-only: `typescript`, `vite`, `@vitejs/plugin-react`, `tsx` (run TS in dev), `vitest` + `@testing-library/*` +
 `jsdom` (tests), `@playwright/test` (end-to-end tests against the Compose stack), `eslint` + `typescript-eslint` + `eslint-plugin-react-hooks` + `eslint-plugin-react-refresh` +
 `eslint-config-prettier` + `prettier` (lint/format), `concurrently` (one `npm run dev`), `pino-pretty` (readable dev
-logs), `@types/*`. Every version is pinned exactly and installed from the committed lockfile (`npm ci`). Vetting notes
-(maintenance, licences, advisories) are in [`docs/research/`](docs/research/).
+logs), `@types/*`. Every version is pinned exactly and installed from the committed lockfile (`npm ci`).
 
 ## Assumptions
 
