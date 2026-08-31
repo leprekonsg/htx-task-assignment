@@ -8,3 +8,7 @@ docs
 *.md
 *.pdf
 .github
+**/*.tsbuildinfo
+**/.tmp
+e2e/test-results
+e2e/playwright-report

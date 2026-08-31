@@ -15,12 +15,16 @@ const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:8080';
 
 export default defineConfig({
   testDir: './tests',
+  // Both default to the package.json directory (the repo root); keep everything Playwright writes under e2e/.
+  outputDir: './test-results',
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false, // tests share one database; they use unique titles but run serially to keep logs readable
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
+  reporter: process.env.CI
+    ? [['github'], ['html', { open: 'never', outputFolder: './playwright-report' }]]
+    : [['list']],
   use: {
     baseURL,
     trace: 'retain-on-failure',
