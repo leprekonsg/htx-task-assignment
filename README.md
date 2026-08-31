@@ -404,11 +404,14 @@ npm run test:e2e                  # 13 Playwright tests against the real Docker 
   focus to the parent, "Create N tasks" / "Creating…" labels with the inference hint, pluralised flash, skills-failed
   banner; and the list's own reporting — the census line sits beside the heading without renaming it, a parent with
   unfinished subtasks says so while leaving Done selectable, and the empty state offers a distinctly named action.
-- **e2e (10, `e2e/`)** — Playwright drives Chromium against `docker compose up --build`, i.e. nginx → API → Postgres
+- **e2e (13, `e2e/`)** — Playwright drives Chromium against `docker compose up --build`, i.e. nginx → API → Postgres
   exactly as a reviewer runs it: smoke (health, `/docs`, seed data), create a task from the UI, Rule A in the assignee
   dropdown (Bob disabled for a Frontend task, Carol accepted), the empty-title alert on the create form, a three-level
   tree created from the nested form with 1 / 1.1 / 1.1.1 numbering, both Rule B rejections and the bottom-up completion
-  path, the depth-5 form cap, and skill
+  path, the depth-5 form cap, the Task List outline — fold a subtree away and bring it back, get interrupted mid-draft
+  and find the half-written subtask still there (caret included), add a subtask in place and reload to prove it reached
+  the server — the same composer refusing a Done parent and saying so before you try, its recovery when `GET
+  /api/skills` fails and then a Retry succeeds without retyping anything, and skill
   inference — asserted strictly against the live LLM when `GEMINI_API_KEY` is set in `.env`, and against the
   `unresolved` path when it is not. `E2E_BASE_URL=http://localhost:8080 npm run test:e2e` reuses a stack that is
   already running; `npm run test:e2e:ui` opens Playwright's inspector. This layer earned its place on the first run:
