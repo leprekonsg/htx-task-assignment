@@ -1,7 +1,7 @@
 // Part 4: nested creation through the dynamically rendered form, hierarchical numbering in the list,
 // and Rule B — a parent can be Done only when every subtask is Done (plus the reopen guard).
 import { expect, test } from '@playwright/test';
-import { rowAlert, rowFor, statusSelect, uniqueTitle } from './helpers.js';
+import { numberCell, rowAlert, statusSelect, uniqueTitle } from './helpers.js';
 
 test('creates a 3-level tree in one request, numbers it, and enforces completion rules', async ({
   page,
@@ -30,11 +30,10 @@ test('creates a 3-level tree in one request, numbers it, and enforces completion
   await expect(page).toHaveURL(/\/$/);
 
   // Hierarchical numbering: N, N.1, N.1.1 for whatever position N the new root got.
-  const rootNumber =
-    (await rowFor(page, root).getByRole('cell').first().textContent())?.trim() ?? '';
+  const rootNumber = (await numberCell(page, root).textContent())?.trim() ?? '';
   expect(rootNumber).toMatch(/^\d+$/);
-  await expect(rowFor(page, child).getByRole('cell').first()).toHaveText(`${rootNumber}.1`);
-  await expect(rowFor(page, grandchild).getByRole('cell').first()).toHaveText(`${rootNumber}.1.1`);
+  await expect(numberCell(page, child)).toHaveText(`${rootNumber}.1`);
+  await expect(numberCell(page, grandchild)).toHaveText(`${rootNumber}.1.1`);
 
   // Rule B: parent cannot be Done while a subtask is not.
   await statusSelect(page, root).selectOption('done');

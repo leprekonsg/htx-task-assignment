@@ -241,7 +241,10 @@ Two pages, matching the assignment's wireframes:
 
 - **Task List (`/`)** — one table for all tasks; subtasks are indented under their parent with hierarchical numbering
   (1, 1.1, 1.1.1) set in monospace so `1.1.1` lines up under `1.1`. A census beside the heading (*7 tasks · 2 done ·
-  1 unassigned*) gives the shape of the list before a single row is read. Status and assignee are inline `<select>`s
+  1 unassigned*) gives the shape of the list before a single row is read. Any task with subtasks can be folded shut
+  from the gutter — the folded row says what it is standing in for (*3 subtasks hidden*, counting the whole subtree),
+  numbering and the census are unchanged by folding, and *Expand all* / *Collapse all* appear only when the list
+  actually has a branch in it. Status and assignee are inline `<select>`s
   that save immediately; the assignee list disables ineligible developers and says which skill they lack; a parent that
   still has unfinished subtasks says so under its status control (*0/2 subtasks done*) **before** you try, while
   leaving Done selectable so the server stays the one that enforces Rule B; a rejected change (409) shows the server's

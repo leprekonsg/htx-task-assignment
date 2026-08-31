@@ -92,22 +92,85 @@ export const UpdateTaskRequestSchema = z
   });
 export type UpdateTaskRequest = z.infer<typeof UpdateTaskRequestSchema>;
 
-/** Flattened view of a task tree for the Task List: hierarchical numbering (1, 1.1, 1.1.1) and depth for indentation. */
+/**
+ * Flattened view of a task tree for the Task List: hierarchical numbering (1, 1.1, 1.1.1), depth
+ * for indentation, and the size of the subtree hanging off this row.
+ *
+ * `number` is built from a task's position among its siblings in the *whole* tree, never from its
+ * position in the returned array. That is what lets the UI fold a subtree away without renumbering
+ * anything: hide 1.2 and 1.3 is still 1.3.
+ */
 export interface TaskListRow {
   task: Task;
   number: string;
   depth: number;
+  /** Every task underneath this one — children, their children, and so on. 0 for a leaf. */
+  descendantCount: number;
 }
 
-export function flattenTaskTree(roots: readonly Task[]): TaskListRow[] {
+/** Children, grandchildren, … of `task`, not counting `task` itself. */
+export function countDescendants(task: Task): number {
+  return task.subtasks.reduce((sum, child) => sum + 1 + countDescendants(child), 0);
+}
+
+/**
+ * One pre-order walk of the forest, shared by both flatteners below. `shouldDescend` decides, for
+ * each task, whether to walk into its subtasks — it is the only difference between "every task" and
+ * "every task a reader can currently see".
+ */
+function walkTaskTree(
+  roots: readonly Task[],
+  shouldDescend: (task: Task) => boolean,
+): TaskListRow[] {
   const rows: TaskListRow[] = [];
   const walk = (tasks: readonly Task[], prefix: string, depth: number) => {
     tasks.forEach((task, index) => {
       const number = prefix ? `${prefix}.${index + 1}` : `${index + 1}`;
-      rows.push({ task, number, depth });
-      walk(task.subtasks, number, depth + 1);
+      rows.push({ task, number, depth, descendantCount: countDescendants(task) });
+      if (shouldDescend(task)) walk(task.subtasks, number, depth + 1);
     });
   };
   walk(roots, '', 0);
   return rows;
+}
+
+/** Every task in the forest, parents before their children. */
+export function flattenTaskTree(roots: readonly Task[]): TaskListRow[] {
+  return walkTaskTree(roots, () => true);
+}
+
+/**
+ * The rows actually on screen once the reader has folded some parents shut. A collapsed task keeps
+ * its own row (with `descendantCount` intact, so the UI can say how many rows it is standing in
+ * for) and contributes none of its descendants.
+ */
+export function flattenVisibleTaskTree(
+  roots: readonly Task[],
+  collapsedIds: ReadonlySet<number>,
+): TaskListRow[] {
+  return walkTaskTree(roots, (task) => !collapsedIds.has(task.id));
+}
+
+/**
+ * Descendants of `task` that are Done. Rule B is enforced over the whole subtree, not just the
+ * direct children, so this is what the "n/m subtasks done" hint has to count to match the server.
+ */
+export function countDoneDescendants(task: Task): number {
+  return task.subtasks.reduce(
+    (sum, child) => sum + (child.status === 'done' ? 1 : 0) + countDoneDescendants(child),
+    0,
+  );
+}
+
+/** Ids of every task that has subtasks — exactly the tasks a reader is able to fold. */
+export function collapsibleTaskIds(roots: readonly Task[]): number[] {
+  const ids: number[] = [];
+  const walk = (tasks: readonly Task[]) => {
+    for (const task of tasks) {
+      if (task.subtasks.length > 0) ids.push(task.id);
+      walk(task.subtasks);
+    }
+  };
+  walk(roots);
+  return ids;
 }

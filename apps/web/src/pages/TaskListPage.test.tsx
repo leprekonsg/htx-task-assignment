@@ -262,6 +262,19 @@ describe('TaskListPage', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
+  it('gives a parent a disclosure toggle and a leaf none', async () => {
+    renderPage();
+    await screen.findByText('Build API');
+
+    expect(screen.getByRole('button', { name: 'Subtasks of Build API' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    // "Write tests" is a leaf and "Design login page" has no subtasks: neither can be folded.
+    expect(screen.queryByRole('button', { name: 'Subtasks of Write tests' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Subtasks of Design login page' })).toBeNull();
+  });
+
   it('retries the developers query on Retry, re-enabling the assignee select', async () => {
     const user = userEvent.setup();
     const fetchState = { developersOk: false };
@@ -279,5 +292,104 @@ describe('TaskListPage', () => {
     expect(
       screen.queryByText("Couldn't load developers, so tasks can't be assigned right now."),
     ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Folding, on a tree deep enough to have something to hide: 1 → (1.1 → 1.1.1, 1.2), 2. The point of
+ * these tests is that folding is a *reading* change — it must never move a number or a total.
+ */
+describe('TaskListPage folding', () => {
+  const node = (id: number, title: string, subtasks: Task[] = []): Task => ({
+    id,
+    title,
+    status: 'todo',
+    parentId: null,
+    assignee: null,
+    skills: [],
+    skillsSource: 'user',
+    skillsModel: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    subtasks,
+  });
+
+  const tree: Task[] = [
+    node(1, 'Build API', [node(2, 'Write tests', [node(4, 'Add fixtures')]), node(5, 'Ship it')]),
+    node(3, 'Design login page'),
+  ];
+
+  function mockTasks(tasks: Task[]) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/tasks') return jsonResponse(200, tasks);
+      if (url === '/api/developers') return jsonResponse(200, developers);
+      throw new Error(`Unhandled request: ${url}`);
+    }) as unknown as typeof fetch;
+  }
+
+  it('hides the whole subtree and says how many rows it is standing in for', async () => {
+    const user = userEvent.setup();
+    mockTasks(tree);
+    renderPage();
+    await screen.findByText('Build API');
+
+    await user.click(screen.getByRole('button', { name: 'Subtasks of Build API' }));
+
+    // Children and grandchildren both go, not just the direct children.
+    expect(screen.queryByText('Write tests')).toBeNull();
+    expect(screen.queryByText('Add fixtures')).toBeNull();
+    expect(screen.queryByText('Ship it')).toBeNull();
+    expect(screen.getByText('3 subtasks hidden')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Subtasks of Build API' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('leaves numbering and the census exactly as they were', async () => {
+    const user = userEvent.setup();
+    mockTasks(tree);
+    renderPage();
+    await screen.findByText('Build API');
+    expect(screen.getByText('5 tasks · 0 done · 5 unassigned')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Subtasks of Build API' }));
+
+    // The census counts what exists, not what is on screen.
+    expect(screen.getByText('5 tasks · 0 done · 5 unassigned')).toBeInTheDocument();
+    // And the row after the folded subtree keeps the number it always had.
+    expect(screen.getByRole('cell', { name: '2' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '1' })).toBeInTheDocument();
+  });
+
+  it('folds and unfolds everything, disabling whichever control would do nothing', async () => {
+    const user = userEvent.setup();
+    mockTasks(tree);
+    renderPage();
+    await screen.findByText('Build API');
+
+    const expandAll = screen.getByRole('button', { name: 'Expand all' });
+    const collapseAll = screen.getByRole('button', { name: 'Collapse all' });
+    expect(expandAll).toBeDisabled(); // nothing is folded yet
+
+    await user.click(collapseAll);
+    expect(screen.queryByText('Write tests')).toBeNull();
+    expect(screen.getByText('Design login page')).toBeInTheDocument(); // a leaf root survives
+    expect(collapseAll).toBeDisabled();
+    expect(expandAll).toBeEnabled();
+
+    await user.click(expandAll);
+    expect(screen.getByText('Add fixtures')).toBeInTheDocument();
+    expect(expandAll).toBeDisabled();
+  });
+
+  it('offers no folding controls when nothing in the list has subtasks', async () => {
+    mockTasks([node(1, 'Build API'), node(2, 'Design login page')]);
+    renderPage();
+    await screen.findByText('Build API');
+
+    expect(screen.queryByRole('button', { name: 'Expand all' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Collapse all' })).toBeNull();
   });
 });

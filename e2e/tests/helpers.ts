@@ -26,6 +26,15 @@ export function rowFor(page: Page, title: string): Locator {
     .filter({ has: page.getByRole('cell', { name: title, exact: true }) });
 }
 
+/**
+ * The hierarchical-number cell of a task's row ("1.2"). Deliberately a helper rather than an
+ * index at every call site: the number is the second cell, because the first is the fold gutter
+ * that holds the disclosure toggle. If the columns ever move again, they move here once.
+ */
+export function numberCell(page: Page, title: string): Locator {
+  return rowFor(page, title).getByRole('cell').nth(1);
+}
+
 export function statusSelect(page: Page, title: string): Locator {
   return page.getByLabel(`Status of ${title}`, { exact: true });
 }

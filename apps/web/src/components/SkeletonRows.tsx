@@ -3,7 +3,7 @@
 // grey bars roughly where the real text will be do. Five rows is an arbitrary but typical page size
 // for the empty-loading moment; it just needs to look like "a table is coming," not match the real
 // row count (which isn't known yet).
-const COLUMNS = 5;
+const COLUMNS = 6;
 const ROWS = 5;
 
 export default function SkeletonRows() {

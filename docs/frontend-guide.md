@@ -41,7 +41,7 @@ Read these in order; each paragraph is one file.
 3. **`src/index.css`** — Tailwind setup and the design tokens (`@theme` block), with
    `src/components/typeStyles.ts` and `buttonStyles.ts` beside it holding the shared type and button
    class strings. Skim them once so the class names you see everywhere else (`bg-accent`,
-   `text-text-muted`, `microLabelClass`) make sense; see §6.
+   `text-text-muted`, `microLabelClass`) make sense; see §7.
 4. **`src/api/client.ts`** — `apiGet`/`apiPost`/`apiPatch`, the only functions that call `fetch`
    directly, plus `ApiError`, which turns the server's `{ error: { code, message } }` envelope into
    a real JS exception with a `.message` you can show to a user.
@@ -49,10 +49,11 @@ Read these in order; each paragraph is one file.
    (`useTasks`, `useDevelopers`, `useSkills`, `useCreateTask`, `useUpdateTask`). Read this before
    any page component; see §3 for what a "query" and a "mutation" actually are.
 6. **`src/pages/TaskListPage.tsx`** → **`src/components/TaskRow.tsx`** →
-   **`StatusSelect.tsx`** / **`AssigneeSelect.tsx`** / **`SkillBadges.tsx`** — the `/` page, in the
-   order data flows: the page fetches tasks and developers and picks between loading / error / empty
-   / table; each row owns its own PATCH; the two selects are "controlled" (§4) and dumb — they don't
-   know what a PATCH is, they just report the new value.
+   **`StatusSelect.tsx`** / **`AssigneeSelect.tsx`** / **`SkillBadges.tsx`** / **`SubtaskToggle.tsx`**
+   — the `/` page, in the order data flows: the page fetches tasks and developers, decides which
+   rows are visible (§6), and picks between loading / error / empty / table; each row owns its own
+   PATCH; the two selects are "controlled" (§4) and dumb — they don't know what a PATCH is, they
+   just report the new value.
 7. **`src/components/task-form/treeReducer.ts`** — read this file itself; it's short and has good
    comments. It's the state model for the create-task form: one root task with nested subtasks,
    edited by dispatching actions addressed by a `path`. See §3.
@@ -102,7 +103,7 @@ the font stack as CSS variables (`--color-accent`, `--radius-md`, ...); Tailwind
 matching utility classes (`bg-accent`, `rounded-md`). Every component in this app uses only those
 generated utilities — never a raw Tailwind palette class like `bg-blue-500` and never an inline hex
 colour — so the entire app's palette lives in one file, and changing a token there changes every
-component that uses it. §6 covers what this app's particular tokens mean and why there are so few.
+component that uses it. §7 covers what this app's particular tokens mean and why there are so few.
 
 ## 4. How a status change travels
 
@@ -165,7 +166,37 @@ the UI for this data" — it's an imperative act on a real DOM element:
   disappears). Removing a subtask that has children first asks with `window.confirm` — the only
   place the app uses a browser dialog.
 
-## 6. The design system: two inks on paper
+## 6. How folding travels
+
+A parent row can be folded shut, which takes its whole subtree off the screen. The interesting part
+isn't the chevron; it's where the state lives and what it is keyed by.
+
+1. `TaskListPage` holds one piece of state for the whole table: `collapsedIds`, a
+   `Set<number>` of **task ids**. Not numbers like `"1.2"` — a task's number describes where it
+   currently sits among its siblings, so it changes the moment something is inserted above it, and a
+   fold keyed by number would quietly start hiding a different row. An id never changes.
+2. Clicking `SubtaskToggle` calls `onToggleCollapse`, which adds or removes that id. React re-renders
+   the page with the new set; nothing else in the app knows folding exists.
+3. The page then flattens the same server data **twice**, for two different questions:
+   `flattenVisibleTaskTree(tasks, collapsedIds)` answers *what is on screen* and is what the table
+   maps over; `flattenTaskTree(tasks)` answers *what exists* and is what the census counts. That is
+   why folding a subtree never moves the *7 tasks · 2 done* line — it isn't a filter over the data,
+   it's a choice about how much of it to draw.
+4. Both live in `@htx/shared` (`task.ts`) and share one walk, whose only parameter is "should I
+   descend into this task's subtasks?". Numbering is built during the walk from each task's position
+   among its siblings, never from its position in the returned array — so a folded subtree leaves no
+   gap and renumbers nothing. Fold 1.2 and 1.3 is still 1.3. The pure functions are unit-tested
+   without rendering anything (`packages/shared/src/task.test.ts`).
+5. A folded row says what it is hiding — *3 subtasks hidden*, counting the whole subtree, not just
+   the direct children — and the toggle carries `aria-expanded`, which is the attribute a screen
+   reader uses to announce "expanded"/"collapsed". The button's own label therefore names what it
+   controls ("Subtasks of Build API") and never the state, so the two can't drift apart.
+
+`Expand all` / `Collapse all` are the same state set wholesale, from `collapsibleTaskIds(tasks)` —
+the ids of every task that has subtasks. That list is also how the page knows whether to offer the
+controls at all: a flat list has nothing to fold, so it gets no toolbar.
+
+## 7. The design system: two inks on paper
 
 Every colour, size and radius in this app is declared once, in the `@theme` block of `index.css`, and
 no component is allowed to invent one. That single rule is most of what "a design system" means in
@@ -219,7 +250,7 @@ That is why `microLabelClass` — the only class in the app that uppercases anyt
 on decorative text and `<th>` column headers, never on a label, legend, button or option. If you add
 a micro-label somewhere new, check first whether its text is somebody's accessible name.
 
-## 7. Running and testing
+## 8. Running and testing
 
 From the repo root (all commands use the npm workspace, not `apps/web` directly):
 
