@@ -57,8 +57,8 @@ Read these in order; each paragraph is one file.
 8. **`src/components/task-form/TaskNodeForm.tsx`** → **`src/pages/CreateTaskPage.tsx`** — the form
    itself. `TaskNodeForm` renders itself for each of its own subtasks (a component calling itself is
    normal in React — it's how any nested/tree UI gets built). `CreateTaskPage` owns the
-   `useReducer`, decides whether Submit is allowed, and turns a successful submit into a POST plus a
-   redirect.
+   `useReducer`, validates the whole tree when the user submits (focusing the first task without a
+   title), and turns a successful submit into a POST plus a redirect.
 9. **`src/components/{SkeletonRows,EmptyState,ErrorBanner,FlashBanner}.tsx`** — small, single-purpose
    display components used by the two pages above. Read on demand; each has its own header comment.
 
@@ -132,16 +132,36 @@ component that uses it.
    `TaskNodeForm` renders itself once per subtask, only the components on that path actually produce
    new JSX — an untouched sibling subtree renders again structurally but with the exact same prop
    values, so nothing the user sees changes.
-3. On every render, `firstProblem(state.root)` walks the whole tree depth-first and returns the
-   `path` of the first task with a blank title, or `null`. `CreateTaskPage` disables the Submit
-   button whenever that isn't `null` (or a request is already in flight).
-4. Clicking Submit calls `toCreateRequest(state.root)`, which turns the `FormNode` tree into the
-   API's `CreateTaskRequest` shape — trimming titles and dropping `skillIds`/`subtasks` entirely when
+3. Clicking **Create task** runs `handleSubmit`, which first calls `firstProblem(state.root)`. That
+   walks the tree depth-first and returns the `path` and `key` of the first task with a blank title,
+   or `null`. If there is one, the page flips `showErrors` on (so every empty title now shows
+   "Title is required" under it, with `aria-invalid`), focuses that input by its id
+   (`task-title-<key>`), announces "Task 1.1 needs a title" beside the button — and stops. The
+   button is deliberately *not* disabled for this case: a disabled control can't explain itself, and
+   the offending field may be several screens down a deep tree. (The `<form>` has `noValidate` so
+   the browser's own "Please fill out this field" bubble doesn't pre-empt this.)
+4. If the tree is valid, `toCreateRequest(state.root)` turns the `FormNode` tree into the API's
+   `CreateTaskRequest` shape — trimming titles and dropping `skillIds`/`subtasks` entirely when
    empty, so an untouched task doesn't send `"skillIds": []` (the backend takes a missing key as "the
    user didn't choose skills — infer them").
-5. `useCreateTask().mutate(request)` POSTs it. On success, `CreateTaskPage` calls
-   `navigate('/', { state: { flash: `Created "${request.title}"` } })`; on failure, it renders
+5. `useCreateTask().mutate(request)` POSTs it. While `isPending` the button reads "Creating…" and,
+   if any node has no skills, a `role="status"` line says skills are being inferred (the LLM call can
+   take a few seconds). On success, `CreateTaskPage` calls
+   `navigate('/', { state: { flash: 'Created "…" and 2 subtasks' } })`; on failure, it renders
    `createTask.error.message` in a banner at the top of the form instead of redirecting.
+
+Two details of this form are about **focus**, which is the one thing you can't express as "describe
+the UI for this data" — it's an imperative act on a real DOM element:
+
+- Every title input has `autoFocus`. React calls `.focus()` on the element once, when it *mounts*,
+  so the root title takes focus when the page opens and a freshly added subtask's title takes focus
+  the moment it appears (the browser scrolls it into view for free). Nothing steals focus later,
+  because re-renders don't re-mount.
+- Each block keeps a `ref` to its own Add subtask button. A `ref` is React's escape hatch to the
+  underlying DOM node; the parent uses it to hand focus back to that button after one of its
+  subtasks is removed (otherwise focus would drop to `<body>` when the focused Remove button
+  disappears). Removing a subtask that has children first asks with `window.confirm` — the only
+  place the app uses a browser dialog.
 
 ## 6. Running and testing
 
@@ -154,8 +174,9 @@ From the repo root (all commands use the npm workspace, not `apps/web` directly)
 - `npm run build -w @htx/web` — production build (typecheck + `vite build`) into `apps/web/dist`.
 - `npm run test:e2e` — the Playwright suite in `e2e/` drives a real browser against the full Docker
   Compose stack (nginx → API → Postgres). Read `e2e/tests/subtasks-rule-b.spec.ts` after this guide: it
-  is the whole product story in one test — create a three-level tree from the nested form, watch the
-  numbering appear, try to close the parent early, complete it bottom-up.
+  is the whole product story in one test — create a three-level tree from the nested form (clicking
+  the buttons by their accessible names, `Add subtask to task 1.1`), watch the numbering appear, try
+  to close the parent early, complete it bottom-up.
 
 Tests live next to the file they test (`treeReducer.test.ts` beside `treeReducer.ts`, etc.) and never
 hit a real server: `globalThis.fetch` is replaced with a small mock that answers by URL and method,

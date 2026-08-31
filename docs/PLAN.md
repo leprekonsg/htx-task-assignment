@@ -71,7 +71,9 @@ add-under-done and grandchild cases; the concurrency race; inference with a fake
 unknown skill names / one batched call per request); `/docs/json` is valid.
 
 **Web:** list renders numbering, badges, source tags; ineligible developers are disabled options with a reason; status change
-sends the right PATCH; a 409 shows the server message; the create form nests to depth 5 and posts the right payload.
+sends the right PATCH; a 409 shows the server message; the create form nests to depth 5 and posts the right payload; submitting
+with an empty title focuses and names that task instead of a disabled button; Add/Remove subtask move focus; a failed
+skills or developers fetch shows a banner and disables only the affected operation.
 
 **End-to-end (Playwright, `e2e/`):** Chromium against the real `docker compose up --build` stack — nginx → API → Postgres —
 so the test exercises the same path a reviewer uses: smoke (health, `/docs`, seed), UI create, Rule A in the assignee
@@ -80,7 +82,7 @@ completion path, the depth-5 form cap, and inference (strict LLM assertion when 
 
 ## 6. Acceptance checklist
 
-Verified 2026-08-31 on a clean `docker compose up --build` (Playwright suite, 10/10) plus 111 unit/integration tests.
+Verified 2026-08-31 on a clean `docker compose up --build` (Playwright suite, 10/10) plus 135 unit/integration tests.
 
 - [x] 1 — tables, M:N relations, status enum, seed matches the table (`smoke.spec.ts` "seed data is present")
 - [x] 2 — all endpoints; Bob on a Frontend task → 409 `DEVELOPER_LACKS_SKILLS`, Carol → 200 (`rule-a.spec.ts`)

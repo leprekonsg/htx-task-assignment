@@ -19,6 +19,9 @@
   --color-surface: #f7f7f8;
   --color-surface-raised: #ffffff;
   --color-border: #e2e2e6;
+  /* 3.2:1 against the page surface (WCAG 1.4.11 needs 3:1) — used where a border is the only
+     cue, e.g. the subtask nesting rail. */
+  --color-border-strong: #8a8a90;
 
   /* Text */
   --color-text: #1c1c22;

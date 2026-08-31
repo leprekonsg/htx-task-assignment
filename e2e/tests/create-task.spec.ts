@@ -10,7 +10,12 @@ test('creates a task with a chosen skill and shows it in the list', async ({ pag
   await expect(page.getByLabel(/assignee/i)).toHaveCount(0);
 
   const submit = page.getByRole('button', { name: 'Create task' });
-  await expect(submit).toBeDisabled(); // empty title
+  await expect(submit).toBeEnabled(); // an empty title no longer disables Submit
+
+  // Clicking with an empty title shows an alert and focuses the offending field instead.
+  await submit.click();
+  await expect(page.getByRole('alert')).toHaveText('Task 1 needs a title.');
+  await expect(page.getByLabel('Title')).toBeFocused();
 
   await page.getByLabel('Title').fill(title);
   await page.getByRole('group', { name: 'Skills for task 1' }).getByLabel('Frontend').check();

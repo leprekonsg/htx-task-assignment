@@ -3,6 +3,12 @@
  * (1 → 1.1 → 1.1.1). Every edit is an action addressed by a `path` — the list of child indices from the
  * root — and the reducer returns a new tree without mutating the old one, which is what React needs to
  * re-render only what changed. Being a pure function, it is tested without rendering anything.
+ *
+ * Alongside the reducer this module exports the handful of small, pure helpers the page and
+ * TaskNodeForm need to read the tree: `taskNumber` (path → "1.2.1"-style label), `countNodes`
+ * (node + descendants, for the "Create N tasks" button label), `anyNodeWithoutSkills` (does any
+ * node still need LLM inference, for the "this can take a few seconds" hint), and `firstProblem`
+ * (the first missing title, for focus-and-alert on a failed submit attempt).
  */
 import { MAX_TASK_DEPTH, type CreateTaskRequest } from '@htx/shared';
 
@@ -36,6 +42,26 @@ export function createInitialState(): FormState {
 /** Depth of the node at `path`: the root is depth 1. */
 export const depthAt = (path: Path): number => path.length + 1;
 export const canAddSubtaskAt = (path: Path): boolean => depthAt(path) < MAX_TASK_DEPTH;
+
+/** "1" for the root, "1.2" for its second subtask, "1.2.1" for that subtask's first child, etc. */
+export function taskNumber(path: Path): string {
+  return [1, ...path.map((index) => index + 1)].join('.');
+}
+
+/** The node itself plus every descendant, e.g. a lone root counts as 1. */
+export function countNodes(node: FormNode): number {
+  return 1 + node.subtasks.reduce((sum, child) => sum + countNodes(child), 0);
+}
+
+/**
+ * True if `node` or any descendant was left with no skills chosen. Those are exactly the nodes
+ * the backend hands to the LLM inference chain on create, which is why the page uses this to
+ * decide whether to warn the user that a pending submit may take a few seconds.
+ */
+export function anyNodeWithoutSkills(node: FormNode): boolean {
+  if (node.skillIds.length === 0) return true;
+  return node.subtasks.some(anyNodeWithoutSkills);
+}
 
 export function treeReducer(state: FormState, action: FormAction): FormState {
   switch (action.type) {
@@ -104,10 +130,18 @@ export function toCreateRequest(root: FormNode): CreateTaskRequest {
   return convert(root);
 }
 
-/** First validation problem in the tree, or null. Mirrors the shared schema so errors show before submitting. */
-export function firstProblem(root: FormNode): { path: Path; message: string } | null {
-  const walk = (n: FormNode, path: number[]): { path: Path; message: string } | null => {
-    if (n.title.trim().length === 0) return { path, message: 'Title is required' };
+/**
+ * First validation problem in the tree, or null. Mirrors the shared schema so errors show before
+ * submitting. Includes the offending node's `key` (not just its `path`) so the page can move focus
+ * straight to `#task-title-${key}` — the DOM id doesn't change when siblings are added or removed,
+ * but a `path` alone isn't enough to build that id without also having the node in hand.
+ */
+export function firstProblem(root: FormNode): { path: Path; key: number; message: string } | null {
+  const walk = (
+    n: FormNode,
+    path: number[],
+  ): { path: Path; key: number; message: string } | null => {
+    if (n.title.trim().length === 0) return { path, key: n.key, message: 'Title is required' };
     for (let i = 0; i < n.subtasks.length; i++) {
       const problem = walk(n.subtasks[i]!, [...path, i]);
       if (problem) return problem;

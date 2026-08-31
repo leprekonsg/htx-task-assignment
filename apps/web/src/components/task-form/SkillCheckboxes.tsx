@@ -2,6 +2,9 @@
 // task and every subtask each choose their own skills). Kept separate from TaskNodeForm mainly
 // because a checkbox *group* needs a `<fieldset>`/`<legend>` pair to have one accessible name per
 // group — with several of these on a page (one per subtask), each needs its own distinct legend.
+// This component used to repeat "Leave empty and the skills will be inferred from the title" under
+// every single group — harmless with one node, noisy with four. That explanation now lives once,
+// at the top of CreateTaskPage, so this component only renders the legend and the checkboxes.
 import type { Skill } from '@htx/shared';
 
 interface SkillCheckboxesProps {
@@ -20,9 +23,6 @@ export default function SkillCheckboxes({
   return (
     <fieldset className="flex flex-col gap-1">
       <legend className="text-sm font-medium text-text">{legend}</legend>
-      <p className="text-xs text-text-muted">
-        Leave empty and the skills will be inferred from the title
-      </p>
       <div className="flex flex-wrap gap-3">
         {skills.map((skill) => (
           <label key={skill.id} className="flex items-center gap-1.5 text-sm text-text">

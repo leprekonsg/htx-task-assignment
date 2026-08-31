@@ -14,19 +14,19 @@ test('creates a 3-level tree in one request, numbers it, and enforces completion
   await page.getByLabel('Title').fill(root);
   await page.getByRole('group', { name: 'Skills for task 1' }).getByLabel('Backend').check();
 
-  // Root's "Add subtask" is the last one in DOM order (children render above it).
-  await page.getByRole('button', { name: 'Add subtask' }).last().click();
+  // Each node's own "Add subtask" button now has a distinct accessible name naming that task, so
+  // this can target the root's button directly instead of relying on DOM order.
+  await page.getByRole('button', { name: 'Add subtask to task 1', exact: true }).click();
   await expect(page.getByText('Task 1.1', { exact: true })).toBeVisible();
   await page.getByLabel('Title').nth(1).fill(child);
   await page.getByRole('group', { name: 'Skills for task 1.1' }).getByLabel('Backend').check();
 
-  // The first "Add subtask" now belongs to task 1.1.
-  await page.getByRole('button', { name: 'Add subtask' }).first().click();
+  await page.getByRole('button', { name: 'Add subtask to task 1.1', exact: true }).click();
   await expect(page.getByText('Task 1.1.1', { exact: true })).toBeVisible();
   await page.getByLabel('Title').nth(2).fill(grandchild);
   await page.getByRole('group', { name: 'Skills for task 1.1.1' }).getByLabel('Backend').check();
 
-  await page.getByRole('button', { name: 'Create task' }).click();
+  await page.getByRole('button', { name: 'Create 3 tasks', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
 
   // Hierarchical numbering: N, N.1, N.1.1 for whatever position N the new root got.
@@ -74,6 +74,8 @@ test('the form stops nesting at depth 5', async ({ page }) => {
   await page.goto('/tasks/new');
   for (let depth = 1; depth < 5; depth++) {
     // Each click adds a child to the deepest node: its button is always first in DOM order.
+    // Accessible names are now e.g. "Add subtask to task 1.1.1" rather than the bare "Add subtask";
+    // Playwright's default name match is substring/case-insensitive, so this still finds them.
     await page.getByRole('button', { name: 'Add subtask' }).first().click();
   }
   await expect(page.getByText('Task 1.1.1.1.1', { exact: true })).toBeVisible();

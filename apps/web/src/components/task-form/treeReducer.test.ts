@@ -2,12 +2,17 @@
 // no React), these tests call it directly and check the returned tree; nothing is rendered. The
 // three things worth testing about a tree reducer: it edits the right node, it never mutates a node
 // it wasn't asked to touch (checked with `toBe`, which compares object identity, not just shape),
-// and it respects the app's structural rules (max depth, root can't be removed).
+// and it respects the app's structural rules (max depth, root can't be removed). Below that are
+// tests for the small pure helpers this module also exports: `taskNumber`, `countNodes`,
+// `anyNodeWithoutSkills`, and `firstProblem` (which now carries the offending node's `key`).
 import { describe, expect, it } from 'vitest';
 import {
+  anyNodeWithoutSkills,
+  countNodes,
   createInitialState,
   depthAt,
   firstProblem,
+  taskNumber,
   toCreateRequest,
   treeReducer,
   type FormState,
@@ -131,12 +136,16 @@ describe('firstProblem', () => {
     expect(firstProblem(state.root)).toBeNull();
   });
 
-  it('reports the root when its title is empty', () => {
+  it('reports the root when its title is empty, including its key', () => {
     const state = createInitialState();
-    expect(firstProblem(state.root)).toEqual({ path: [], message: 'Title is required' });
+    expect(firstProblem(state.root)).toEqual({
+      path: [],
+      key: state.root.key,
+      message: 'Title is required',
+    });
   });
 
-  it('finds the first empty title by path, depth-first', () => {
+  it("finds the first empty title by path, depth-first, and reports that node's key", () => {
     let state = createInitialState();
     state = treeReducer(state, { type: 'setTitle', path: [], title: 'Root' });
     state = treeReducer(state, { type: 'addSubtask', path: [] });
@@ -145,6 +154,60 @@ describe('firstProblem', () => {
     // path [1] (second child) is left blank
 
     const problem = firstProblem(state.root);
-    expect(problem).toEqual({ path: [1], message: 'Title is required' });
+    expect(problem).toEqual({
+      path: [1],
+      key: state.root.subtasks[1]!.key,
+      message: 'Title is required',
+    });
+  });
+});
+
+describe('taskNumber', () => {
+  it('is "1" for the root', () => {
+    expect(taskNumber([])).toBe('1');
+  });
+
+  it('is dotted for nested paths', () => {
+    expect(taskNumber([1])).toBe('1.2');
+    expect(taskNumber([1, 0])).toBe('1.2.1');
+  });
+});
+
+describe('countNodes', () => {
+  it('is 1 for a lone root', () => {
+    const state = createInitialState();
+    expect(countNodes(state.root)).toBe(1);
+  });
+
+  it('counts the node plus every descendant', () => {
+    let state = createInitialState();
+    state = treeReducer(state, { type: 'addSubtask', path: [] });
+    state = treeReducer(state, { type: 'addSubtask', path: [] });
+    state = treeReducer(state, { type: 'addSubtask', path: [0] });
+    // root -> two children, the first of which has one child of its own: 4 nodes total.
+    expect(countNodes(state.root)).toBe(4);
+  });
+});
+
+describe('anyNodeWithoutSkills', () => {
+  it('is true for a freshly created root (no skills chosen)', () => {
+    const state = createInitialState();
+    expect(anyNodeWithoutSkills(state.root)).toBe(true);
+  });
+
+  it('is false once every node in the tree has at least one skill', () => {
+    let state = createInitialState();
+    state = treeReducer(state, { type: 'toggleSkill', path: [], skillId: 1 });
+    state = treeReducer(state, { type: 'addSubtask', path: [] });
+    state = treeReducer(state, { type: 'toggleSkill', path: [0], skillId: 2 });
+    expect(anyNodeWithoutSkills(state.root)).toBe(false);
+  });
+
+  it('is true when a deeply nested descendant is missing skills, even if the root has some', () => {
+    let state = createInitialState();
+    state = treeReducer(state, { type: 'toggleSkill', path: [], skillId: 1 });
+    state = treeReducer(state, { type: 'addSubtask', path: [] });
+    // child at [0] has no skills
+    expect(anyNodeWithoutSkills(state.root)).toBe(true);
   });
 });
