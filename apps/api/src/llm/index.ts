@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import type { Config } from '../config.js';
 import { ChainClassifier, type ChainLogger } from './chain.js';
 import { DisabledClassifier, type SkillClassifier } from './classifier.js';
+import { RateLimitCooldown } from './cooldown.js';
 import { GenAiClassifier } from './genai-classifier.js';
 
 export type {
@@ -33,5 +34,7 @@ export function createSkillClassifier(config: Config, log: ChainLogger): SkillCl
         structuredOutput: supportsStructuredOutput(model),
       }),
   );
-  return new ChainClassifier(classifiers, config.LLM_TIMEOUT_MS, log);
+  // One cooldown for the whole chain: each model's 429s are tracked under its own name.
+  const cooldown = new RateLimitCooldown(config.LLM_RATE_LIMIT_COOLDOWN_MS);
+  return new ChainClassifier(classifiers, config.LLM_TIMEOUT_MS, log, cooldown);
 }

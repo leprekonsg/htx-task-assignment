@@ -210,10 +210,39 @@ describe('GenAiClassifier', () => {
     }
   });
 
-  it('retries a 429 and succeeds on the second attempt', async () => {
+  it('does not retry a 429, and flags it so the chain falls through to a model with its own quota', async () => {
     const generateContent = vi
       .fn()
-      .mockRejectedValueOnce(new ApiError({ message: 'quota exceeded', status: 429 }))
+      .mockRejectedValue(new ApiError({ message: 'quota exceeded', status: 429 }));
+    const classifier = new GenAiClassifier(stubAi(generateContent), {
+      ...baseOptions,
+      attempts: 3,
+    });
+
+    const result = await classifier.classify(oneItem, ['Frontend', 'Backend']);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.rateLimited).toBe(true);
+      expect(result.reason).toContain('quota exceeded');
+    }
+  });
+
+  it('does not flag a non-429 failure as rate-limited', async () => {
+    const generateContent = vi
+      .fn()
+      .mockRejectedValue(new ApiError({ message: 'unavailable', status: 503 }));
+    const classifier = new GenAiClassifier(stubAi(generateContent), baseOptions);
+
+    const result = await classifier.classify(oneItem, ['Frontend']);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.rateLimited).toBeUndefined();
+  });
+
+  it('retries a connection-level failure from fetch', async () => {
+    const generateContent = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed', { cause: new Error('ECONNRESET') }))
       .mockResolvedValueOnce({ text: '{"items":[{"ref":"0","skills":["Backend"]}]}' });
     const classifier = new GenAiClassifier(stubAi(generateContent), {
       ...baseOptions,
@@ -222,11 +251,19 @@ describe('GenAiClassifier', () => {
 
     const result = await classifier.classify(oneItem, ['Frontend', 'Backend']);
     expect(generateContent).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({
-      ok: true,
-      model: 'gemini-3.5-flash-lite',
-      items: [{ ref: '0', skills: ['Backend'] }],
+    expect(result.ok).toBe(true);
+  });
+
+  it('does not retry a bug in our own code (a TypeError with no cause)', async () => {
+    const generateContent = vi.fn().mockRejectedValue(new TypeError('x is not a function'));
+    const classifier = new GenAiClassifier(stubAi(generateContent), {
+      ...baseOptions,
+      attempts: 3,
     });
+
+    const result = await classifier.classify(oneItem, ['Frontend']);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
   });
 
   it('does not retry a 400', async () => {
@@ -258,25 +295,23 @@ describe('GenAiClassifier', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('times out a hanging attempt client-side and retries', async () => {
-    const generateContent = vi
-      .fn()
-      .mockImplementationOnce(
-        ({ config }: { config: { abortSignal: AbortSignal } }) =>
-          new Promise((_, reject) =>
-            config.abortSignal.addEventListener('abort', () => reject(config.abortSignal.reason)),
-          ),
-      )
-      .mockResolvedValueOnce({ text: '{"items":[{"ref":"0","skills":[]}]}' });
+  it('times out a hanging attempt client-side, and does not spend the budget retrying it', async () => {
+    const generateContent = vi.fn(
+      ({ config }: { config: { abortSignal: AbortSignal } }) =>
+        new Promise((_, reject) =>
+          config.abortSignal.addEventListener('abort', () => reject(config.abortSignal.reason)),
+        ),
+    );
     const classifier = new GenAiClassifier(stubAi(generateContent), {
       ...baseOptions,
-      attempts: 2,
+      attempts: 3,
       attemptTimeoutMs: 20,
     });
 
     const result = await classifier.classify(oneItem, ['Frontend']);
-    expect(generateContent).toHaveBeenCalledTimes(2);
-    expect(result.ok).toBe(true);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('aborted');
   });
 
   it('stops immediately when the chain budget is already exhausted', async () => {
@@ -296,7 +331,7 @@ describe('GenAiClassifier', () => {
     const controller = new AbortController();
     const generateContent = vi.fn().mockImplementation(() => {
       controller.abort();
-      return Promise.reject(new ApiError({ message: 'quota exceeded', status: 429 }));
+      return Promise.reject(new ApiError({ message: 'unavailable', status: 503 }));
     });
     const classifier = new GenAiClassifier(stubAi(generateContent), {
       ...baseOptions,

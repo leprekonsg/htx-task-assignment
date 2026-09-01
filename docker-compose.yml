@@ -45,6 +45,13 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash-lite}
       LLM_FALLBACK_MODELS: ${LLM_FALLBACK_MODELS:-gemma-4-31b-it,gemma-4-26b-a4b-it}
+      # Pass-throughs: set in `.env` (or the shell) to override; an unset key is left out of the
+      # container, so the API's own default (apps/api/src/config.ts) applies.
+      LOG_LEVEL:
+      LLM_TIMEOUT_MS:
+      LLM_ATTEMPT_TIMEOUT_MS:
+      LLM_PRIMARY_ATTEMPTS:
+      LLM_RATE_LIMIT_COOLDOWN_MS:
     depends_on:
       db:
         condition: service_healthy

@@ -30,6 +30,11 @@ const EnvSchema = z.object({
   /** Per-attempt HTTP timeout and attempts for the primary model (fallbacks get one attempt each). */
   LLM_ATTEMPT_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
   LLM_PRIMARY_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(2),
+  /**
+   * How long the chain skips a model that answered 429, so a used-up quota costs one refused request
+   * per window instead of one per task created. Defaults to a per-minute window; 0 disables it.
+   */
+  LLM_RATE_LIMIT_COOLDOWN_MS: z.coerce.number().int().nonnegative().default(60_000),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

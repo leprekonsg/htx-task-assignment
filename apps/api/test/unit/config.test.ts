@@ -16,4 +16,10 @@ describe('loadConfig', () => {
     const config = loadConfig({ DATABASE_URL: 'postgresql://x', GEMINI_API_KEY: 'abc123' });
     expect(config.GEMINI_API_KEY).toBe('abc123');
   });
+
+  it('defaults the rate-limit cooldown to one per-minute window, and accepts 0 to disable it', () => {
+    expect(loadConfig({ DATABASE_URL: 'postgresql://x' }).LLM_RATE_LIMIT_COOLDOWN_MS).toBe(60_000);
+    const off = loadConfig({ DATABASE_URL: 'postgresql://x', LLM_RATE_LIMIT_COOLDOWN_MS: '0' });
+    expect(off.LLM_RATE_LIMIT_COOLDOWN_MS).toBe(0);
+  });
 });

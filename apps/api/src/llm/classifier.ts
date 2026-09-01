@@ -15,7 +15,17 @@ export interface ClassifiedItem {
 }
 
 export type ClassificationResult =
-  { ok: true; model: string; items: ClassifiedItem[] } | { ok: false; reason: string };
+  | { ok: true; model: string; items: ClassifiedItem[] }
+  | {
+      ok: false;
+      reason: string;
+      /**
+       * The provider answered HTTP 429. Rate limits apply per project and vary per model, so this
+       * is a fact about one model rather than the whole chain: the chain moves on to the next
+       * model, whose quota is separate, and holds this one back until its window resets.
+       */
+      rateLimited?: boolean;
+    };
 
 export interface SkillClassifier {
   readonly name: string;

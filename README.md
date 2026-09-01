@@ -15,6 +15,8 @@ Fastify 5 · React 19 (Vite) · Gemini API · Docker Compose**.
 - [Local development](#local-development)
 - [Configuration](#configuration)
 - [System design](#system-design)
+  - [Database](#database)
+- [MCP (Important Feature)](#mcp-important-feature-model-continuity-plan)
 - [API](#api)
 - [Frontend](#frontend)
   - [Create Task form (Part 4.3)](#create-task-form-part-43)
@@ -28,10 +30,10 @@ Fastify 5 · React 19 (Vite) · Gemini API · Docker Compose**.
 
 | Part | Asks for | Where to look |
 |---|---|---|
-| 1 | Postgres schema — developers, tasks, skills, both many-to-many links, task status — with seed data | [Data model](#data-model) · `apps/api/migrations/` |
+| 1 | Postgres schema — developers, tasks, skills, both many-to-many links, task status — with seed data | [Database](#database) · `apps/api/migrations/` |
 | 2 | Node/TypeScript API: create/read/update tasks (assign, change status), read developers and skills; **Rule A** — a developer can only take a task whose skills they all hold | [API](#api) · [Business rules](#business-rules) · `apps/api/src/modules/tasks/` |
 | 3 | React SPA: a Task List (title, skills, status ▾, assignee ▾) and a Create Task page (title, optional skills, no assignee) | [Frontend](#frontend) · `apps/web/src/pages/` |
-| 4 | Subtasks with the same properties as tasks; **Rule B** — a parent is Done only when every subtask is Done | [Data model](#data-model) · [Business rules](#business-rules) |
+| 4 | Subtasks with the same properties as tasks; **Rule B** — a parent is Done only when every subtask is Done | [Database](#database) · [Business rules](#business-rules) |
 | 4.3 | The Create Task page builds subtasks and nested subtasks from React components rendered dynamically on the same page (wireframe: components 1 → 1.1 → 1.1.1, an *Add Subtask* on each, one *Save*) | [Create Task form (Part 4.3)](#create-task-form-part-43) · `apps/web/src/components/task-form/` |
 | 5 | When a task is created without skills, an LLM infers them from the title on the backend | [Skill inference (Part 5)](#skill-inference-part-5) · `apps/api/src/llm/` |
 | 6 | Docker Compose runs everything | [Quick start](#quick-start-docker) · `docker-compose.yml` |
@@ -129,8 +131,15 @@ bad value.
 | `LLM_FALLBACK_MODELS` | `gemma-4-31b-it,gemma-4-26b-a4b-it` | Tried in order when the primary fails (quota, timeout, bad output) |
 | `LLM_TIMEOUT_MS` | `15000` | Whole-chain time budget for one create request |
 | `LLM_ATTEMPT_TIMEOUT_MS` | `8000` | Timeout per attempt, enforced client-side with an `AbortSignal` (not sent as a server deadline — the Gemini API rejects deadlines under 10 s) |
-| `LLM_PRIMARY_ATTEMPTS` | `2` | Attempts for the primary model (429/5xx retried with exponential backoff); fallbacks get one each |
+| `LLM_PRIMARY_ATTEMPTS` | `2` | Attempts for the primary model (408/5xx and dropped connections retried with exponential backoff; a 429 or a timed-out attempt falls through instead); fallbacks get one each |
+| `LLM_RATE_LIMIT_COOLDOWN_MS` | `60000` | How long the chain skips a model after it answers 429; `0` disables the cooldown |
 | `POSTGRES_USER/PASSWORD/DB` | `taskapp` | Used by Compose to create the database |
+
+Under Compose, `docker-compose.yml` sets `DATABASE_URL` (built from `POSTGRES_*`, pointed at the `db` service) and
+`PORT` (`3000`, where `web`'s nginx and the image's healthcheck expect the API) itself, the image sets `NODE_ENV` to
+`production`, and `HOST` keeps its default so the API is reachable from the other containers. Every other key the API
+reads passes through from `.env` to the `api` container when set, and takes its default when not. In local development
+(`npm run dev`) the API reads the whole `.env` file.
 
 ## System design
 
@@ -163,24 +172,140 @@ Inside the API the layering is deliberately shallow: `routes/*` declare schemas 
 tasks.service.ts` holds every business rule and owns transactions; `modules/tasks/tasks.sql.ts` holds every SQL
 statement (so the schema's use can be reviewed in one file); `llm/*` is the only code that calls Gemini.
 
-### Data model
+### Database
+
+Everything persistent lives in one PostgreSQL 17 server: the `db` service in `docker-compose.yml`. This section covers
+the container, the databases inside it, every table and column, and how the schema gets there.
+
+**The container.** `db` runs the stock `postgres:17-alpine` image; there is no Dockerfile for it. Compose passes it
+`POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` from `.env` (all three default to `taskapp`), publishes port
+5432 on the host so `psql`, the dev server and the API's tests can reach it, and mounts the named volume `pgdata` at
+`/var/lib/postgresql/data`. That volume is why tasks survive `docker compose down` followed by `docker compose up`,
+and why `docker compose down -v` is the way to start over. A `pg_isready` healthcheck (every 2 s, up to 30 tries)
+gates the start order: `migrate` doesn't run and `api` doesn't start until the server accepts connections. CI runs the
+same image as a GitHub Actions service container.
+
+The project uses three of the server's databases (the other two, `template0` and `template1`, are Postgres's own and
+nothing here touches them):
+
+| Database | Created by | Purpose |
+|---|---|---|
+| `taskapp` | Postgres, at first start (`POSTGRES_DB`) | The application database: the schema described in this section, migrated and seeded by the `migrate` service. `DATABASE_URL` points here. |
+| `taskapp_test` | [`apps/api/test/global-setup.ts`](apps/api/test/global-setup.ts), the first time the API tests run | The API's integration tests: migrated the same way, truncated between tests. Present only once the tests have run against this server. `TEST_DATABASE_URL` points here (default `postgresql://taskapp:taskapp@localhost:5432/taskapp_test`). |
+| `postgres` | Postgres | The default maintenance database. The test setup connects here to issue `CREATE DATABASE taskapp_test`; nothing else uses it. |
+
+To look inside:
+
+```bash
+docker compose exec db psql -U taskapp -d taskapp                   # a psql shell in the container
+psql postgresql://taskapp:taskapp@localhost:5432/taskapp            # or any client on the host, via the published port
+docker compose exec db pg_dump -U taskapp -d taskapp --schema-only  # the DDL exactly as it stands
+```
+
+**Schema.** One enum and six tables, all in the `public` schema. Five tables are the data model; the sixth,
+`schema_migrations`, is the migration runner's ledger.
 
 ```
 developers ──< developer_skills >── skills ──< task_skills >── tasks ──┐
    id, name                          id, name                    id, title, status, assignee_id ──► developers
                                                                  parent_task_id ──► tasks (self, ON DELETE CASCADE)
                                                                  skills_source, skills_model, created_at, updated_at
+schema_migrations
+   version, applied_at
 ```
 
-- `status` is a Postgres enum `task_status ('todo', 'in_progress', 'done')`.
-- Subtasks are ordinary rows in `tasks` with `parent_task_id` set (Part 4 — "same properties as tasks"). The tree is
-  unbounded in SQL and bounded to 5 levels by the API. The `parent_task_id` foreign key uses
-  `ON DELETE CASCADE`, so deleting a task row directly also deletes its subtasks.
-- `skills_source` records how the task's skills were determined — `user`, `llm` or `unresolved` — and `skills_model`
-  which model answered. This is what lets the UI and the API be honest about when the LLM was actually used.
-- Migrations are plain SQL in `apps/api/migrations/` (`0001_init`, `0002_subtasks`, `0003_skill_inference`), applied by a
-  ~40-line forward-only runner that records versions in `schema_migrations` under an advisory lock. `seed.sql` is
-  idempotent (fixed ids, `ON CONFLICT DO NOTHING`).
+`task_status` is a Postgres enum: `'todo'`, `'in_progress'`, `'done'`. Every `id` is an identity column
+(`GENERATED ALWAYS AS IDENTITY`), so the database assigns ids and a client can't choose them; the seed uses
+`OVERRIDING SYSTEM VALUE` to pin its four developers and two skills to known ids.
+
+`developers` — one row per developer.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `integer` | Primary key, identity |
+| `name` | `text` | `NOT NULL` |
+| `created_at` | `timestamptz` | `NOT NULL`, default `now()` |
+
+`skills` — the skill catalogue. Seeded with the assignment's two skills; a table rather than an enum, so it can grow
+without a migration.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `integer` | Primary key, identity |
+| `name` | `text` | `NOT NULL`, `UNIQUE` |
+
+`developer_skills` — which developer holds which skill (the first many-to-many link).
+
+| Column | Type | Constraints |
+|---|---|---|
+| `developer_id` | `integer` | Part of the primary key; references `developers(id)` `ON DELETE CASCADE` |
+| `skill_id` | `integer` | Part of the primary key; references `skills(id)` `ON DELETE RESTRICT` |
+
+`tasks` — tasks and subtasks alike: a subtask is a row whose `parent_task_id` is set (Part 4, "same properties as
+tasks").
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `integer` | Primary key, identity |
+| `title` | `text` | `NOT NULL`; `CHECK` 1–500 characters (the request schema enforces the same bounds before the row is written) |
+| `status` | `task_status` | `NOT NULL`, default `'todo'` |
+| `assignee_id` | `integer` | Nullable (unassigned); references `developers(id)` `ON DELETE SET NULL`; indexed (`tasks_assignee_id_idx`) |
+| `parent_task_id` | `integer` | Nullable (`NULL` is a root task); references `tasks(id)` `ON DELETE CASCADE`; `CHECK (parent_task_id <> id)`; indexed (`tasks_parent_task_id_idx`) for the parent → children joins in the recursive tree queries |
+| `skills_source` | `text` | `NOT NULL`, default `'user'`; `CHECK IN ('user', 'llm', 'unresolved')` — how the task's skills were determined (see the following list) |
+| `skills_model` | `text` | Nullable; the model that answered when `skills_source = 'llm'` |
+| `created_at` | `timestamptz` | `NOT NULL`, default `now()` |
+| `updated_at` | `timestamptz` | `NOT NULL`, default `now()`; the API's `UPDATE` sets it to `now()` — there is no trigger |
+
+`task_skills` — which skills a task requires (the second many-to-many link).
+
+| Column | Type | Constraints |
+|---|---|---|
+| `task_id` | `integer` | Part of the primary key; references `tasks(id)` `ON DELETE CASCADE` |
+| `skill_id` | `integer` | Part of the primary key; references `skills(id)` `ON DELETE RESTRICT`; indexed (`task_skills_skill_id_idx`) |
+
+`schema_migrations` — the runner's ledger; the runner creates it itself rather than a migration.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `version` | `text` | Primary key; the migration's filename without `.sql`, for example `0002_subtasks` |
+| `applied_at` | `timestamptz` | `NOT NULL`, default `now()` |
+
+The delete rules, read together: deleting a developer unassigns their tasks and drops their skill links; deleting a
+task drops its subtasks (recursively) and its skill links; a skill that any developer or task still references can't
+be deleted. The API exposes no delete endpoint (see [Assumptions](#assumptions)), so these rules exist for direct SQL —
+including the e2e suite's teardown, which deletes its fixture tasks by title and relies on the cascade to take the
+subtasks and links with them.
+
+Three things the schema leaves to the API on purpose:
+
+- **Tree depth.** The self-reference is unbounded in SQL; the API caps a tree at 5 levels (`MAX_DEPTH_EXCEEDED`).
+- **Rule A and Rule B.** Neither is a constraint. Rule B spans rows, which is why it is enforced under a root lock in
+  a transaction instead (see [Business rules](#business-rules)).
+- **What `skills_source` means.** `user`: skills came with the request. `llm`: inferred from the title by the model
+  in `skills_model`. `unresolved`: none supplied and no model answered (no key, quota, timeout). This is what lets the
+  UI and the API be honest about when the LLM was actually used.
+
+**How the schema gets there.** Migrations are plain SQL in [`apps/api/migrations/`](apps/api/migrations/), one file
+per part of the assignment that changed the schema:
+
+| File | Part | What it adds |
+|---|---|---|
+| `0001_init.sql` | 1 | `task_status`, the five data tables, `tasks_assignee_id_idx`, `task_skills_skill_id_idx` |
+| `0002_subtasks.sql` | 4 | `tasks.parent_task_id`, the not-self check, `tasks_parent_task_id_idx` |
+| `0003_skill_inference.sql` | 5 | `tasks.skills_source`, `tasks.skills_model` |
+| `seed.sql` | 1 | Skills 1 Frontend, 2 Backend; developers 1 Alice (Frontend), 2 Bob (Backend), 3 Carol (Frontend, Backend), 4 Dave (Backend). Idempotent: fixed ids, `ON CONFLICT DO NOTHING`, sequences re-synced with `setval` |
+
+The runner, [`apps/api/src/db/migrate.ts`](apps/api/src/db/migrate.ts) (about 60 lines), takes a Postgres advisory
+lock so two API replicas starting together can't both migrate, creates `schema_migrations` if it's missing, and
+applies every `NNNN_name.sql` not yet recorded there in filename order — each in its own transaction, recorded on
+commit. It is forward-only: there are no down migrations, and a schema change is a new numbered file, never an edit to
+an applied one. The seed is a separate step, and the CLI sequences the two: `migrate` in
+[`apps/api/src/db/cli.ts`](apps/api/src/db/cli.ts) calls `runMigrations` and then `runSeed`, both exported by
+`migrate.ts`. The Compose `migrate` service is exactly that command (`node dist/db/cli.js migrate`) run once from the
+API image, and `api` waits for it to exit successfully; locally it is `npm run db:migrate`. The CLI's `demo` and
+`empty` commands migrate and seed first, then `TRUNCATE tasks RESTART IDENTITY CASCADE` and, for `demo`, insert the
+fixture — which is why either works on a database that has only just been created, and why a reload returns ids 1..n
+again (see [Two states you can load](#two-states-you-can-load)).
 
 ### Business rules
 
@@ -206,14 +331,33 @@ each.
 **Atomic nested create.** `POST /api/tasks` accepts a whole tree and inserts it depth-first in one transaction; any
 invalid node (unknown skill id, depth > 5) rolls back everything.
 
+### MCP (Important Feature): Model Continuity Plan
+
+Not that other MCP. This **Model Continuity Plan** keeps skill inference moving when the primary model fails.
+`gemini-3.5-flash-lite` gets two attempts, but only a failure that comes back fast earns the second one: a 408, a 5xx,
+or a dropped connection waits out an exponential backoff (1 s, doubling to a 2 s cap, ±20 % jitter) and tries again.
+Everything else ends the model's turn at once — a 4xx, invalid model output, and an attempt that spent its whole
+8-second timeout, which has already used up what a fallback needs.
+
+A 429 ends the turn too, deliberately. Rate limits apply per project and vary per model, so a wait short enough for a
+synchronous request cannot outlast a per-minute window, while the next model in the chain has a quota of its own. A
+rate-limited model therefore hands over at once, and is then held out of the chain for a minute
+(`LLM_RATE_LIMIT_COOLDOWN_MS`) so the next task created does not pay a round trip to be refused again.
+
+Fall-through runs to `gemma-4-31b-it` and then `gemma-4-26b-a4b-it`, with one attempt each. Retries and fallbacks share
+the same 15-second budget, so a create request waits at most 15 s for inference however many models fail. If the entire
+plan is exhausted, creation remains fail-open: the task is saved as `skills_source = 'unresolved'` instead of failing
+the user's request or pretending that no skills apply.
+
 ### Skill inference (Part 5)
 
 When a task (or any node of a tree) is created without `skillIds`, the API infers the skills from the title before
 saving — automatically, on the backend, in the same request.
 
-- **Provider chain:** `gemini-3.5-flash-lite` (2 attempts, exponential backoff on 408/429/5xx) → `gemma-4-31b-it` →
-  `gemma-4-26b-a4b-it`, all within one 15-second budget shared across the chain. The emailed API key is shared by every
-  reviewer, so hitting the free-tier quota is expected; a 429 on the primary falls through to Gemma instead of failing.
+- **Provider continuity:** the retries, fallback order, and shared time budget are described in the
+  [Model Continuity Plan](#mcp-important-feature-model-continuity-plan). The emailed API key is shared by every
+  reviewer, so hitting the free-tier quota is expected; a 429 on the primary falls through to Gemma instead of failing,
+  and holds the rate-limited model back for a minute so later creates skip it.
 - **One call per request:** every node needing inference goes into a single batched prompt with the allowed skill names
   read from the database and the three examples from the assignment. Gemini models are asked for constrained JSON
   (`responseMimeType` + `responseJsonSchema`). Gemma models accept those options but ignore them — verified live: they
@@ -384,12 +528,12 @@ control borders were ~1.3:1 and failed WCAG 1.4.11.
 
 ## Tests
 
-Four layers, 206 tests in total; every layer runs in CI.
+Four layers, 223 tests in total; every layer runs in CI.
 
 ```bash
 npm test                              # shared + api + web (API tests need `npm run db:up` first)
 npx vitest run --root packages/shared # shared only: 20 tests, no database needed
-npx vitest run --root apps/api        # API only: 59 unit + 55 integration tests against Postgres (taskapp_test database)
+npx vitest run --root apps/api        # API only: 76 unit + 55 integration tests against Postgres (taskapp_test database)
 npx vitest run --root apps/web        # web only: 59 tests, Testing Library + jsdom, fetch mocked
 npm run test:e2e                      # 13 Playwright tests against the real Docker Compose stack (builds and starts it)
 ```
@@ -401,7 +545,11 @@ npm run test:e2e                      # 13 Playwright tests against the real Doc
   cases; the Rule B **concurrency race** (25 rounds, invariant asserted after each); inference with a fake classifier
   (LLM result, failure ⇒ `unresolved`, a genuinely empty result kept, unknown skill names filtered and an all-unknown
   item treated as unresolved, one batched call per request); the
-  classifier chain, prompt, and JSON extraction (including Gemma-style prose around the JSON); config parsing;
+  classifier chain — fallback order, the shared budget against a model's own attempt loop (a timed-out primary leaves
+  the fallback its share), and the rate-limit cooldown (a 429 falls through and is remembered, the model is skipped
+  while its window runs and tried again after it, `0` turns the cooldown off); the retry policy (408/5xx and a dropped
+  connection retried; a 429, a timed-out attempt, and a bug in our own code not); prompt and JSON extraction
+  (including Gemma-style prose around the JSON); config parsing;
   `/docs/json` validity; the local-only guard in front of the destructive database commands; and the demo fixture,
   loaded and then checked against Rule A, Rule B, and the depth limit — and reloaded, to prove the second load returns
   the identical tree.

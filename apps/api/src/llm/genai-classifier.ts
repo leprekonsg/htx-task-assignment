@@ -10,7 +10,13 @@ import { buildPrompt, extractJson, responseSchema } from './prompt.js';
 
 export interface GenAiClassifierOptions {
   model: string;
-  /** Attempts for this model. Only 408/429/5xx, network errors and per-attempt timeouts are retried. */
+  /**
+   * Attempts for this model. Only 408/5xx and network-level failures are retried: those fail fast,
+   * so a second attempt costs little. A 429 hands over to the next model instead (see
+   * `RETRYABLE_STATUSES`), and a timed-out attempt is not retried either — it has already spent a
+   * full `attemptTimeoutMs`, and what is left of the chain budget buys more from another model than
+   * from asking this one twice.
+   */
   attempts: number;
   /**
    * Timeout per attempt, in ms — enforced client-side with an AbortSignal and never sent to the server.
@@ -28,7 +34,16 @@ export interface GenAiClassifierOptions {
   maxDelayMs?: number;
 }
 
-const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+/**
+ * Statuses worth another attempt against the same model. They fail fast, so retrying is cheap.
+ *
+ * 429 is deliberately absent. A per-minute limit resets on a 60-second boundary, which no backoff
+ * short enough for a synchronous HTTP request can wait out, and limits vary per model — so the
+ * useful answer to a 429 is the next model in the chain, which has its own quota, not another
+ * attempt at this one. `ChainClassifier` does that, and remembers the 429 so later requests skip
+ * the model while its window resets.
+ */
+const RETRYABLE_STATUSES = new Set([408, 500, 502, 503, 504]);
 
 /**
  * Shape used to PARSE the model's raw text. Deliberately looser than `responseSchema` (which enforces
@@ -150,7 +165,11 @@ export class GenAiClassifier implements SkillClassifier {
   }
 
   private failure(error: unknown): ClassificationResult {
-    return { ok: false, reason: `${this.name}: ${describe(error)}` };
+    return {
+      ok: false,
+      reason: `${this.name}: ${describe(error)}`,
+      ...(isRateLimit(error) ? { rateLimited: true } : {}),
+    };
   }
 
   private backoffMs(attempt: number): number {
@@ -162,10 +181,23 @@ export class GenAiClassifier implements SkillClassifier {
   }
 }
 
-/** HTTP 408/429/5xx, network failures and per-attempt timeouts are worth another try; 4xx are not. */
+/** HTTP 429 — this model is out of quota, whether the exhausted window is per minute or per day. */
+function isRateLimit(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 429;
+}
+
+/**
+ * Whether another attempt against the same model is worth the budget: a fast HTTP failure, or a
+ * connection that never got that far. Everything else ends this model and lets the chain move on —
+ * a 429 or any other 4xx (the next attempt would be refused identically), an aborted or timed-out
+ * attempt (it has already spent its full slot), and a bug in our own code (it would only throw
+ * again).
+ */
 function isRetryable(error: unknown): boolean {
   if (error instanceof ApiError) return RETRYABLE_STATUSES.has(error.status);
-  return true;
+  // Node reports connection-level failures from `fetch` as `TypeError: fetch failed`, with the
+  // underlying socket error attached as `cause`; a plain programming TypeError carries none.
+  return error instanceof TypeError && error.cause !== undefined;
 }
 
 /** Resolves after `ms`, or as soon as `signal` aborts (the caller checks the signal next). */

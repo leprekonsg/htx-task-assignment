@@ -276,3 +276,30 @@ Consequence for the plan: pass `httpOptions: { timeout, retryOptions: { attempts
   4.8 s (`gemma-4-26b-a4b-it`), and `gemini-3.5-flash-lite` accepts it too (0.9 s vs 1.5 s). Adopted for every model;
   the per-attempt timeout default moved from 5 s to 8 s accordingly.
 
+
+## Errata 3 (2026-09-01, from a review of the retry policy against the findings above)
+
+Errata 2's description of the attempt loop ("retrying only on 408/429/5xx, network errors and attempt timeouts") is
+superseded. Reviewing that policy against §1 and §5 turned up three mismatches between what the loop retries and what
+the rate limits it was written for actually do:
+
+- **Retrying a 429 against the same model cannot work.** §1 records that limits reset per minute (and RPD at midnight
+  Pacific) and "vary depending on the specific model being used". The backoff is capped at 2 s so a synchronous create
+  request stays bounded — three orders of magnitude short of a per-minute window. Meanwhile the fallback chain already
+  holds the real remedy, a model with its own quota. 429 was therefore removed from the retryable set: it ends the
+  model immediately and the chain falls through.
+- **Retrying a timed-out attempt starved the fallback.** With the shipped defaults (15 s budget, 8 s per attempt, 2
+  attempts) a primary that timed out twice consumed 8 s + ~1 s backoff + the remaining ~6 s, and `ChainClassifier`'s
+  `if (combined.aborted) break` then skipped *both* Gemma models — the retry spent the budget the fallback needed. A
+  timed-out attempt is no longer retried; the primary hands over at ~8 s with ~7 s left, enough for `gemma-4-31b-it`
+  (measured above at 2.7–5.1 s).
+- **A 429 cost a full round trip on every subsequent create.** Nothing remembered the refusal, so an exhausted quota —
+  per-day especially, which does not reset until midnight Pacific — was rediscovered once per task created.
+  `RateLimitCooldown` now holds a model that answered 429 out of the chain for `LLM_RATE_LIMIT_COOLDOWN_MS` (default
+  60 s, the shortest window that can clear a per-minute limit).
+
+What was *not* done, and why: §5 notes that no `retryDelay`/`RetryInfo` field is documented on the current api-errors
+page, and `ApiError` exposes only `status` and `message` (the SDK stringifies the whole JSON error body into that
+message, so a `RetryInfo` or `QuotaFailure` detail would survive there — unverified). Parsing it would let the cooldown
+distinguish `rate_limit_exceeded` from `quota_exceeded` and honour a server-supplied delay. That needs a real 429 to
+verify against before anything depends on it, so the flat window stands for now.
