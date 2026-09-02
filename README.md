@@ -30,7 +30,7 @@ Fastify 5 · React 19 (Vite) · Gemini API · Docker Compose**.
 
 | Part | Asks for | Where to look |
 |---|---|---|
-| 1 | Postgres schema — developers, tasks, skills, both many-to-many links, task status — with seed data | [Database](#database) · `apps/api/migrations/` |
+| 1 | Postgres schema — developers, tasks, skills, both many-to-many links, task status — with seed data | [Database](#database) (including why the business rules are enforced by the API, not by triggers) · `apps/api/migrations/` |
 | 2 | Node/TypeScript API: create/read/update tasks (assign, change status), read developers and skills; **Rule A** — a developer can only take a task whose skills they all hold | [API](#api) · [Business rules](#business-rules) · `apps/api/src/modules/tasks/` |
 | 3 | React SPA: a Task List (title, skills, status ▾, assignee ▾) and a Create Task page (title, optional skills, no assignee) | [Frontend](#frontend) · `apps/web/src/pages/` |
 | 4 | Subtasks with the same properties as tasks; **Rule B** — a parent is Done only when every subtask is Done | [Database](#database) · [Business rules](#business-rules) |
@@ -279,8 +279,14 @@ subtasks and links with them.
 Three things the schema leaves to the API on purpose:
 
 - **Tree depth.** The self-reference is unbounded in SQL; the API caps a tree at 5 levels (`MAX_DEPTH_EXCEEDED`).
-- **Rule A and Rule B.** Neither is a constraint. Rule B spans rows, which is why it is enforced under a root lock in
-  a transaction instead (see [Business rules](#business-rules)).
+- **Rule A and Rule B.** Neither is a constraint, and neither is a trigger. Rule A spans three tables, so enforcing
+  it in the database would take three triggers — on a task's assignee, on a skill added to a task, and on a skill
+  removed from a developer — two of them guarding writes the API never makes, and the third raising an exception
+  the API would translate back into the 409 it already sends. Rule B would add two more on `tasks`, on a status
+  change and on an insert under a done parent, and each rule would then live in two places. Instead the schema is
+  shaped so that each rule is a short lookup plus a check: the two link tables make Rule A a set comparison (the
+  pure function `canAssign`, shared with the UI), and the self-reference makes Rule B a recursive query over the
+  subtree, run under a root lock in a transaction because it spans rows (see [Business rules](#business-rules)).
 - **What `skills_source` means.** `user`: skills came with the request. `llm`: inferred from the title by the model
   in `skills_model`. `unresolved`: none supplied and no model answered (no key, quota, timeout). This is what lets the
   UI and the API be honest about when the LLM was actually used.
@@ -391,6 +397,7 @@ http://localhost:3000/docs (dev). Summary:
 |---|---|---|---|---|
 | GET | `/api/health` | | `{ "status": "ok" }` | |
 | GET | `/api/skills` | | `Skill[]` | |
+| GET | `/api/skills/:id` | | `Skill` | 404 |
 | GET | `/api/developers` | | `Developer[]` (with `skills`) | |
 | GET | `/api/developers/:id` | | `Developer` | 404 |
 | GET | `/api/tasks` | | `Task[]` — root tasks with nested `subtasks` | |
@@ -528,12 +535,12 @@ control borders were ~1.3:1 and failed WCAG 1.4.11.
 
 ## Tests
 
-Four layers, 223 tests in total; every layer runs in CI.
+Four layers, 225 tests in total; every layer runs in CI.
 
 ```bash
 npm test                              # shared + api + web (API tests need `npm run db:up` first)
 npx vitest run --root packages/shared # shared only: 20 tests, no database needed
-npx vitest run --root apps/api        # API only: 76 unit + 55 integration tests against Postgres (taskapp_test database)
+npx vitest run --root apps/api        # API only: 76 unit + 57 integration tests against Postgres (taskapp_test database)
 npx vitest run --root apps/web        # web only: 59 tests, Testing Library + jsdom, fetch mocked
 npm run test:e2e                      # 13 Playwright tests against the real Docker Compose stack (builds and starts it)
 ```
